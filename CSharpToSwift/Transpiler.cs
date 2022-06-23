@@ -124,64 +124,238 @@ class Transpiler
     void TranspileClass(string swiftName, ClassDeclarationSyntax node, INamedTypeSymbol symbol, SemanticModel model, TextWriter w)
     {
         w.WriteLine($"class {swiftName} {{");
-
         foreach (var member in node.Members) {
-            switch (member.Kind ()) {
-                // case SyntaxKind.ConstructorDeclaration:
-                //     var ctor = (ConstructorDeclarationSyntax)member;
-                //     TranspileConstructor(ctor, symbol, w);
-                //     break;
-                // case SyntaxKind.PropertyDeclaration:
-                //     var prop = (PropertyDeclarationSyntax)member;
-                //     TranspileProperty(prop, symbol, w);
-                //     break;
-                // case SyntaxKind.MethodDeclaration:
-                //     var method = (MethodDeclarationSyntax)member;
-                //     TranspileMethod(method, symbol, w);
-                //     break;
-                // case SyntaxKind.EventDeclaration:
-                //     var evt = (EventDeclarationSyntax)member;
-                //     TranspileEvent(evt, symbol, w);
-                //     break;
-                // case SyntaxKind.IndexerDeclaration:
-                //     var idx = (IndexerDeclarationSyntax)member;
-                //     TranspileIndexer(idx, symbol, w);
-                //     break;
-                // case SyntaxKind.EventFieldDeclaration:
-                //     var evtField = (EventFieldDeclarationSyntax)member;
-                //     TranspileEventField(evtField, symbol, w);
-                //     break;
-                case SyntaxKind.FieldDeclaration:
-                    var field = (FieldDeclarationSyntax)member;
+            TranspileClassOrStructMember(member, swiftName, node, symbol, model, w);
+        }
+        w.WriteLine($"}}");
+    }
+
+    void TranspileClassOrStructMember(MemberDeclarationSyntax member, string typeName, TypeDeclarationSyntax node, INamedTypeSymbol symbol, SemanticModel model, TextWriter w)
+    {
+        switch (member.Kind ()) {
+            // case SyntaxKind.ConstructorDeclaration:
+            //     var ctor = (ConstructorDeclarationSyntax)member;
+            //     TranspileConstructor(ctor, symbol, w);
+            //     break;
+            // case SyntaxKind.PropertyDeclaration:
+            //     var prop = (PropertyDeclarationSyntax)member;
+            //     TranspileProperty(prop, symbol, w);
+            //     break;
+            // case SyntaxKind.MethodDeclaration:
+            //     var method = (MethodDeclarationSyntax)member;
+            //     TranspileMethod(method, symbol, w);
+            //     break;
+            // case SyntaxKind.EventDeclaration:
+            //     var evt = (EventDeclarationSyntax)member;
+            //     TranspileEvent(evt, symbol, w);
+            //     break;
+            // case SyntaxKind.IndexerDeclaration:
+            //     var idx = (IndexerDeclarationSyntax)member;
+            //     TranspileIndexer(idx, symbol, w);
+            //     break;
+            // case SyntaxKind.EventFieldDeclaration:
+            //     var evtField = (EventFieldDeclarationSyntax)member;
+            //     TranspileEventField(evtField, symbol, w);
+            //     break;
+            case SyntaxKind.FieldDeclaration:
+                var field = (FieldDeclarationSyntax)member;
+                {
+                    var docs = GetDocs(field);
+                    var type = model.GetSymbolInfo(field.Declaration.Type).Symbol;
+                    var ftypeName = GetSwiftTypeName(type);
+                    var isReadOnly = field.Modifiers.Any(x => x.IsKind(SyntaxKind.ReadOnlyKeyword));
+                    var decl = isReadOnly ? (symbol.IsStatic ? "static let" : "let") : (symbol.IsStatic ? "static var" : "var");
+                    foreach (var v in field.Declaration.Variables)
                     {
-                        var type = model.GetSymbolInfo(field.Declaration.Type).Symbol;
-                        var typeName = GetSwiftTypeName(type);
-                        var decl = symbol.IsStatic ? "static var" : "var";
-                        foreach (var v in field.Declaration.Variables) {
-                            var vn = v.Identifier.ToString();
-                            w.WriteLine($"    {decl} {vn}: {typeName}");
-                        }
+                        var vn = v.Identifier.ToString();
+                        var init = TranspileExpression(v.Initializer?.Value);
+                        if (!isReadOnly)
+                            init = GetDefaultValue(type);
+                        var typeSuffix = init == "nil" ? "?" : "";
+                        if (init is not null)
+                            init = " = " + init;
+                        if (docs.Length > 0)
+                            w.WriteLine($"    /// {docs}");
+                        w.WriteLine($"    {decl} {vn}: {ftypeName}{typeSuffix}{init}");
                     }
-                    break;
-                // case SyntaxKind.ConstantFieldDeclaration:
-                //     var constField = (ConstantFieldDeclarationSyntax)member;
-                //     TranspileConstantField(constField, symbol, w);
-                //     break;
-                // case SyntaxKind.EnumMemberDeclaration:
-                //     var enumMember = (EnumMemberDeclarationSyntax)member;
-                //     TranspileEnumMember(enumMember, symbol, w);
-                //     break;
-                // case SyntaxKind.EventAccessorDeclaration:
-                //     var evtAccessor = (EventAccessorDeclarationSyntax)member;
-                //     TranspileEventAccessor(evtAccessor, symbol, w);
-                //     break;
+                }
+                break;
+            // case SyntaxKind.ConstantFieldDeclaration:
+            //     var constField = (ConstantFieldDeclarationSyntax)member;
+            //     TranspileConstantField(constField, symbol, w);
+            //     break;
+            // case SyntaxKind.EnumMemberDeclaration:
+            //     var enumMember = (EnumMemberDeclarationSyntax)member;
+            //     TranspileEnumMember(enumMember, symbol, w);
+            //     break;
+            // case SyntaxKind.EventAccessorDeclaration:
+            //     var evtAccessor = (EventAccessorDeclarationSyntax)member;
+            //     TranspileEventAccessor(evtAccessor, symbol, w);
+            //     break;
+            default:
+                // Error($"Unhandled member kind {member.Kind()}");
+                break;
+        }
+    }
+
+    private static string GetDocs(CSharpSyntaxNode field)
+    {
+        var lines =
+            field.GetLeadingTrivia()
+            .Where(x => x.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia) || x.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia))
+            .SelectMany(x => x.ToFullString().Split('\n'))
+            .Select(x =>
+                x
+                .Replace("<summary>", "")
+                .Replace("</summary>", "")
+                .Replace("///", "")
+                .Replace("\t", " ")
+                .Trim())
+            .Where(x => x.Length > 0);
+        return string.Join(" ", lines);
+    }
+
+    string GetSwiftTypeName(ISymbol? s)
+    {
+        if (s == null) {
+            return "AnyObject";
+        }
+        else if (s is IArrayTypeSymbol ats) {
+            return $"[{GetSwiftTypeName(ats.ElementType)}]";
+        }
+        else {
+            var name = s.Name;
+            switch (name) {
+                case nameof(System.Boolean):
+                    return "Bool";
+                case nameof(System.Byte):
+                    return "UInt8";
+                case nameof(System.Char):
+                    return "Character";
+                case nameof(System.IntPtr):
+                    return "Int";
+                case "Object":
+                    return "AnyObject";
+                case "Single":
+                    return "Float";
                 default:
-                    // Error($"Unhandled member kind {member.Kind()}");
-                    break;
+                    if (string.IsNullOrEmpty(name)) {
+                        Error($"Symbol {s} : {s.GetType()} has no name");
+                        return "AnyObject";
+                    }
+                    return name;
             }
         }
+    }
 
-        w.WriteLine($"}}");
+    string GetDefaultValue(ISymbol? type)
+    {
+        if (type == null) {
+            return "nil";
+        }
+        switch (type.Kind) {
+            case SymbolKind.ArrayType:
+                return "[]";
+            case SymbolKind.PointerType:
+                return "nil";
+            case SymbolKind.DynamicType:
+                return "nil";
+            case SymbolKind.TypeParameter:
+                return "nil";
+            case SymbolKind.ErrorType:
+                return "nil";
+            case SymbolKind.NamedType:
+                var ntype = (INamedTypeSymbol)type;
+                switch (type.Name) {
+                    case nameof(System.Boolean):
+                        return "false";
+                    case nameof(System.Byte):
+                        return "0";
+                    case nameof(System.Double):
+                        return "0.0";
+                    case nameof(System.Single):
+                        return "0.0";
+                    case nameof(System.Int16):
+                        return "0";
+                    case nameof(System.Int32):
+                        return "0";
+                    case nameof(System.Int64):
+                        return "0";
+                    case nameof(System.IntPtr):
+                        return "0";
+                    case nameof(System.UInt16):
+                        return "0";
+                    case nameof(System.UInt32):
+                        return "0";
+                    case nameof(System.UInt64):
+                        return "0";
+                    case nameof(System.UIntPtr):
+                        return "0";
+                    default:
+                        if (ntype.IsReferenceType) {
+                            return "nil";
+                        }
+                        else {
+                            Error($"Unhandled default value for named type: {type.Name}");
+                            return $"0/*NT:{type.Name}*/";
+                        }
+                }
+            default:
+                Error($"Unhandled default value for type {type.Kind}");
+                return $"nil/*T:{type.Kind}*/";
+        }
+    }
+
+    string? TranspileExpression(ExpressionSyntax? value)
+    {
+        if (value is null) {
+            return null;
+        }
+        switch (value.Kind ()) {
+            case SyntaxKind.FalseLiteralExpression:
+                return "false";
+            case SyntaxKind.TrueLiteralExpression:
+                return "true";
+            case SyntaxKind.NumericLiteralExpression:
+                var nlit = (LiteralExpressionSyntax)value;
+                return nlit.Token.ValueText;
+            case SyntaxKind.StringLiteralExpression:
+                var slit = (LiteralExpressionSyntax)value;
+                {
+                    var stext = slit.GetText().ToString();
+                    if (stext.Length > 0 && stext[0] == '@') {
+                        stext = "\"\"\"\n" + slit.Token.ValueText + "\n\"\"\"";
+                    }
+                    return stext;
+                }
+            case SyntaxKind.SimpleMemberAccessExpression:
+                var sma = (MemberAccessExpressionSyntax)value;
+                return $"{TranspileExpression(sma.Expression)}.{sma.Name.ToString()}";
+            case SyntaxKind.IdentifierName:
+                var id = (IdentifierNameSyntax)value;
+                return id.ToString();
+            case SyntaxKind.InvocationExpression:
+                var inv = (InvocationExpressionSyntax)value;
+                var args = inv.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression)).ToArray();
+                return $"{TranspileExpression(inv.Expression)}({string.Join(", ", args)})";
+            // case SyntaxKind.ObjectCreationExpression:
+            //     var obj = (ObjectCreationExpressionSyntax)value;
+            //     var args2 = obj.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression)).ToArray();
+            //     return $"{obj.Type.ToString()}({string.Join(", ", args2)})";
+            case SyntaxKind.CastExpression:
+                var cast = (CastExpressionSyntax)value;
+                return $"{TranspileExpression(cast.Expression)} as {cast.Type}";
+            case SyntaxKind.NullLiteralExpression:
+                return "nil";
+            case SyntaxKind.ThisExpression:
+                return "self";
+            case SyntaxKind.ParenthesizedExpression:
+                var paren = (ParenthesizedExpressionSyntax)value;
+                return $"({TranspileExpression(paren.Expression)})";
+            default:
+                Error($"Unhandled expression kind {value.Kind()}");
+                return $"nil/*E:{value.Kind()}*/";
+        }
     }
 
     async Task GetTypeDeclarationsAsync(Compilation compilation, List<(MemberDeclarationSyntax Syntax, SemanticModel Symbol)> types)
@@ -245,24 +419,6 @@ class Transpiler
                 break;
             default:
                 break;
-        }
-    }
-
-    string GetSwiftTypeName(ISymbol? s)
-    {
-        if (s == null) {
-            return "AnyObject";
-        }
-        else if (s is IArrayTypeSymbol ats) {
-            return $"[{GetSwiftTypeName(ats.ElementType)}]";
-        }
-        else {
-            var name = s.Name;
-            if (string.IsNullOrEmpty(name)) {
-                Error($"Symbol {s} : {s.GetType()} has no name");
-                return "AnyObject";
-            }
-            return name;
         }
     }
 }
