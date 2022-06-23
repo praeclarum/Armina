@@ -103,13 +103,13 @@ class Transpiler
                 case SyntaxKind.ClassDeclaration:
                     var c = (ClassDeclarationSyntax)node;
                     using (var cw = NewSwiftWriter(swiftName)) {
-                        TranspileClass(swiftName, c, symbol, model, cw);
+                        TranspileClass(swiftName, c, symbol, model, "", cw);
                     }
                     break;
                 case SyntaxKind.StructDeclaration:
                     var s = (StructDeclarationSyntax)node;
                     using (var sw = NewSwiftWriter(swiftName)) {
-                        TranspileStruct(swiftName, s, symbol, model, sw);
+                        TranspileStruct(swiftName, s, symbol, model, "", sw);
                     }
                     break;
                 default:
@@ -139,9 +139,9 @@ class Transpiler
         }
     }
 
-    void TranspileClass(string swiftName, ClassDeclarationSyntax node, INamedTypeSymbol symbol, SemanticModel model, TextWriter w)
+    void TranspileClass(string swiftName, ClassDeclarationSyntax node, INamedTypeSymbol symbol, SemanticModel model, string indent, TextWriter w)
     {
-        w.Write($"class {swiftName}");
+        w.Write($"{indent}class {swiftName}");
         var head = " : ";
         if (symbol.BaseType is {} baseType && !(baseType.Name == "Object" && baseType.ContainingNamespace.Name == "System")) {
             var baseSwiftName = GetSwiftTypeName(baseType);
@@ -155,14 +155,14 @@ class Transpiler
         }
         w.WriteLine($" {{");
         foreach (var member in node.Members) {
-            TranspileClassOrStructMember(member, swiftName, node, symbol, model, w);
+            TranspileClassOrStructMember(member, swiftName, node, symbol, model, indent + "    ", w);
         }
-        w.WriteLine($"}}");
+        w.WriteLine($"{indent}}}");
     }
 
-    void TranspileStruct(string swiftName, StructDeclarationSyntax node, INamedTypeSymbol symbol, SemanticModel model, TextWriter w)
+    void TranspileStruct(string swiftName, StructDeclarationSyntax node, INamedTypeSymbol symbol, SemanticModel model, string indent, TextWriter w)
     {
-        w.Write($"struct {swiftName}");
+        w.Write($"{indent}struct {swiftName}");
         var head = " : ";
         foreach (var i in symbol.Interfaces) {
             var baseSwiftName = GetSwiftTypeName(i);
@@ -171,50 +171,48 @@ class Transpiler
         }
         w.WriteLine($" {{");
         foreach (var member in node.Members) {
-            TranspileClassOrStructMember(member, swiftName, node, symbol, model, w);
+            TranspileClassOrStructMember(member, swiftName, node, symbol, model, indent + "    ", w);
         }
-        w.WriteLine($"}}");
+        w.WriteLine($"{indent}}}");
     }
 
-    void TranspileClassOrStructMember(MemberDeclarationSyntax member, string typeName, TypeDeclarationSyntax node, INamedTypeSymbol typeSymbol, SemanticModel model, TextWriter w)
+    void TranspileClassOrStructMember(MemberDeclarationSyntax member, string typeName, TypeDeclarationSyntax node, INamedTypeSymbol typeSymbol, SemanticModel model, string indent, TextWriter w)
     {
         switch (member.Kind ()) {
+            case SyntaxKind.ClassDeclaration:
+                var classDecl = (ClassDeclarationSyntax)member;
+                if (model.GetDeclaredSymbol(classDecl) is INamedTypeSymbol classSymbol) {
+                    var classSwiftName = GetSwiftTypeName(classSymbol);
+                    TranspileClass(classSwiftName, classDecl, classSymbol, model, indent, w);
+                }
+                else {
+                    Error($"Unable to get symbol for class: {classDecl.Identifier.Text}");
+                    w.WriteLine($"{indent}/*{classDecl.ToString().Trim()}*/");
+                }
+                break;
             case SyntaxKind.ConstructorDeclaration:
-                TranspileCtor((ConstructorDeclarationSyntax)member, typeSymbol, model, w);
+                TranspileCtor((ConstructorDeclarationSyntax)member, typeSymbol, model, indent, w);
                 break;
             case SyntaxKind.FieldDeclaration:
-                TranspileField((FieldDeclarationSyntax)member, typeSymbol, model, w);
+                TranspileField((FieldDeclarationSyntax)member, typeSymbol, model, indent, w);
                 break;
             case SyntaxKind.MethodDeclaration:
-                TranspileMethod((MethodDeclarationSyntax)member, typeSymbol, model, w);
+                TranspileMethod((MethodDeclarationSyntax)member, typeSymbol, model, indent, w);
                 break;
             case SyntaxKind.PropertyDeclaration:
-                TranspileProperty((PropertyDeclarationSyntax)member, typeSymbol, model, w);
+                TranspileProperty((PropertyDeclarationSyntax)member, typeSymbol, model, indent, w);
                 break;
-            // case SyntaxKind.EventDeclaration:
-            //     var evt = (EventDeclarationSyntax)member;
-            //     TranspileEvent(evt, symbol, w);
-            //     break;
-            // case SyntaxKind.IndexerDeclaration:
-            //     var idx = (IndexerDeclarationSyntax)member;
-            //     TranspileIndexer(idx, symbol, w);
-            //     break;
-            // case SyntaxKind.EventFieldDeclaration:
-            //     var evtField = (EventFieldDeclarationSyntax)member;
-            //     TranspileEventField(evtField, symbol, w);
-            //     break;
-            // case SyntaxKind.ConstantFieldDeclaration:
-            //     var constField = (ConstantFieldDeclarationSyntax)member;
-            //     TranspileConstantField(constField, symbol, w);
-            //     break;
-            // case SyntaxKind.EnumMemberDeclaration:
-            //     var enumMember = (EnumMemberDeclarationSyntax)member;
-            //     TranspileEnumMember(enumMember, symbol, w);
-            //     break;
-            // case SyntaxKind.EventAccessorDeclaration:
-            //     var evtAccessor = (EventAccessorDeclarationSyntax)member;
-            //     TranspileEventAccessor(evtAccessor, symbol, w);
-            //     break;
+            case SyntaxKind.StructDeclaration:
+                var structDecl = (StructDeclarationSyntax)member;
+                if (model.GetDeclaredSymbol(structDecl) is INamedTypeSymbol structSymbol) {
+                    var structSwiftName = GetSwiftTypeName(structSymbol);
+                    TranspileStruct(structSwiftName, structDecl, structSymbol, model, indent, w);
+                }
+                else {
+                    Error($"Unable to get symbol for struct: {structDecl.Identifier.Text}");
+                    w.WriteLine($"{indent}/*{structDecl.ToString().Trim()}*/");
+                }
+                break;
             default:
                 Error($"Unsupported member kind: {member.Kind()}");
                 w.WriteLine($"    /*{member.Kind()}: {member.ToString().Trim()}*/");
@@ -222,7 +220,7 @@ class Transpiler
         }
     }
 
-    void TranspileField(FieldDeclarationSyntax field, INamedTypeSymbol containerTypeSymbol, SemanticModel model, TextWriter w)
+    void TranspileField(FieldDeclarationSyntax field, INamedTypeSymbol containerTypeSymbol, SemanticModel model, string indent, TextWriter w)
     {
         var docs = GetDocs(field);
         var type = model.GetSymbolInfo(field.Declaration.Type).Symbol;
@@ -244,34 +242,34 @@ class Transpiler
             if (initCode is not null)
                 initCode = " = " + initCode;
             if (docs.Length > 0)
-                w.WriteLine($"    /// {docs}");
-            w.WriteLine($"    {acc}{decl} {vn}: {ftypeName}{typeSuffix}{initCode}");
+                w.WriteLine($"{indent}/// {docs}");
+            w.WriteLine($"{indent}{acc}{decl} {vn}: {ftypeName}{typeSuffix}{initCode}");
         }
     }
 
-    void TranspileCtor(ConstructorDeclarationSyntax ctor, INamedTypeSymbol containerTypeSymbol, SemanticModel model, TextWriter w)
+    void TranspileCtor(ConstructorDeclarationSyntax ctor, INamedTypeSymbol containerTypeSymbol, SemanticModel model, string indent, TextWriter w)
     {
         var docs = GetDocs(ctor);
         if (docs.Length > 0)
-            w.WriteLine($"    /// {docs}");
+            w.WriteLine($"{indent}/// {docs}");
         var methodSymbol = model.GetDeclaredSymbol(ctor);
         var acc = GetAccessLevelModifier(methodSymbol);
         var isStatic = ctor.Modifiers.Any(x => x.IsKind(SyntaxKind.StaticKeyword));
         var slotType = isStatic ? "static " : "";
-        w.Write($"    {acc}{slotType}init(");
+        w.Write($"{indent}{acc}{slotType}init(");
         TranspileParams(ctor.ParameterList, model, w);
         w.WriteLine($") {{");
         if (ctor.Body is {} block) {
-            TranspileBlock(block, model, "        ", w);
+            TranspileBlock(block, model, $"{indent}    ", w);
         }
-        w.WriteLine($"    }}");
+        w.WriteLine($"{indent}}}");
     }
 
-    void TranspileMethod(MethodDeclarationSyntax method, INamedTypeSymbol containerTypeSymbol, SemanticModel model, TextWriter w)
+    void TranspileMethod(MethodDeclarationSyntax method, INamedTypeSymbol containerTypeSymbol, SemanticModel model, string indent, TextWriter w)
     {
         var docs = GetDocs(method);
         if (docs.Length > 0)
-            w.WriteLine($"    /// {docs}");
+            w.WriteLine($"{indent}/// {docs}");
         var returnType = model.GetSymbolInfo(method.ReturnType).Symbol;
         var isVoid = IsTypeVoid(returnType);
         var returnTypeCode = isVoid ? "" : $" -> {GetSwiftTypeName(returnType)}";
@@ -288,13 +286,13 @@ class Transpiler
         }
         // acc = acc + $"/*{method.Modifiers}*/";
         var slotType = isStatic ? "static " : (isOverride ? "override " : (isAbstract ? "/*abstract*/ " : (isVirtual ? "" : "final ")));
-        w.Write($"    {acc}{slotType}func {method.Identifier.ToString()}(");
+        w.Write($"{indent}{acc}{slotType}func {method.Identifier.ToString()}(");
         TranspileParams(method.ParameterList, model, w);
         w.WriteLine($"){returnTypeCode} {{");
         if (method.Body is {} block) {
-            TranspileBlock(block, model, "        ", w);
+            TranspileBlock(block, model, $"{indent}    ", w);
         }
-        w.WriteLine($"    }}");
+        w.WriteLine($"{indent}}}");
     }
 
     private void TranspileParams(ParameterListSyntax parameterList, SemanticModel model, TextWriter w)
@@ -309,7 +307,7 @@ class Transpiler
             }
             else {
                 var ptypeSymbol = model.GetSymbolInfo(p.Type).Symbol;
-                var isArray = IsArray(ptypeSymbol);
+                var isArray = IsTypeArray(ptypeSymbol);
                 var ptypeName = GetSwiftTypeName(ptypeSymbol);
                 var refMod = isArray ? "inout " : "";
                 w.Write($"{head}{pname}: {refMod}{ptypeName}");
@@ -318,36 +316,31 @@ class Transpiler
         }
     }
 
-    static bool IsArray(ISymbol? ptypeSymbol)
-    {
-        return ptypeSymbol is IArrayTypeSymbol;
-    }
-
-    void TranspileProperty(PropertyDeclarationSyntax prop, INamedTypeSymbol containerTypeSymbol, SemanticModel model, TextWriter w)
+    void TranspileProperty(PropertyDeclarationSyntax prop, INamedTypeSymbol containerTypeSymbol, SemanticModel model, string indent, TextWriter w)
     {
         var docs = GetDocs(prop);
         if (docs.Length > 0)
-            w.WriteLine($"    /// {docs}");
+            w.WriteLine($"{indent}/// {docs}");
         var returnType = model.GetSymbolInfo(prop.Type).Symbol;
         string slotType = GetSlotTypeModifier(prop);
         var vn = prop.Identifier.ToString();
         var initCode = prop.Initializer is not null ? TranspileExpression(prop.Initializer.Value, model) : null;
         if (initCode is not null)
             initCode = " = " + initCode;
-        w.WriteLine($"    {slotType}var {vn}: {GetSwiftTypeName(returnType)}{initCode} {{");
+        w.WriteLine($"{indent}{slotType}var {vn}: {GetSwiftTypeName(returnType)}{initCode} {{");
         if (prop.AccessorList is { } alist)
         {
             foreach (var accessor in alist.Accessors)
             {
                 var accLevel = GetAccessLevelModifier(accessor, model);
-                w.WriteLine($"        {accessor.Keyword} {{");
+                w.WriteLine($"{indent}    {accessor.Keyword} {{");
                 if (accessor.Body is {} block) {
-                    TranspileBlock(block, model, "            ", w);
+                    TranspileBlock(block, model, $"{indent}        ", w);
                 }
-                w.WriteLine($"        }}");
+                w.WriteLine($"{indent}    }}");
             }
         }
-        w.WriteLine($"    }}");
+        w.WriteLine($"{indent}}}");
     }
 
     string TranspileExpression(ExpressionSyntax value, SemanticModel model)
@@ -739,9 +732,14 @@ class Transpiler
         }
     }
 
-    bool IsTypeVoid(ISymbol? returnType)
+    bool IsTypeVoid(ISymbol? typeSymbol)
     {
-        return returnType is null || (returnType.Name == "Void" && returnType.ContainingNamespace.Name == "System");
+        return typeSymbol is null || (typeSymbol.Name == "Void" && typeSymbol.ContainingNamespace.Name == "System");
+    }
+
+    static bool IsTypeArray(ISymbol? typeSymbol)
+    {
+        return typeSymbol is IArrayTypeSymbol;
     }
 
     string GetDefaultValue(ISymbol? type)
