@@ -370,6 +370,9 @@ class Transpiler
             case SyntaxKind.DivideExpression:
                 var div = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(div.Left, model)} / {TranspileExpression(div.Right, model)}";
+            case SyntaxKind.DivideAssignmentExpression:
+                var divAssign = (AssignmentExpressionSyntax)value;
+                return $"{TranspileExpression(divAssign.Left, model)} /= {TranspileExpression(divAssign.Right, model)}";
             case SyntaxKind.ElementAccessExpression:
                 var ea = (ElementAccessExpressionSyntax)value;
                 var eaArgs = string.Join(", ", ea.ArgumentList.Arguments.Select(x => TranspileExpression(x.Expression, model)));
@@ -412,6 +415,9 @@ class Transpiler
             case SyntaxKind.MultiplyExpression:
                 var mul = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(mul.Left, model)} * {TranspileExpression(mul.Right, model)}";
+            case SyntaxKind.MultiplyAssignmentExpression:
+                var mulAssign = (AssignmentExpressionSyntax)value;
+                return $"{TranspileExpression(mulAssign.Left, model)} *= {TranspileExpression(mulAssign.Right, model)}";
             case SyntaxKind.NotEqualsExpression:
                 var neq = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(neq.Left, model)} != {TranspileExpression(neq.Right, model)}";
