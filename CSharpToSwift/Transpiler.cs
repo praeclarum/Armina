@@ -112,15 +112,6 @@ class Transpiler
                         TranspileStruct(swiftName, s, symbol, model, sw);
                     }
                     break;
-                // case SyntaxKind.InterfaceDeclaration:
-                //     var i = (InterfaceDeclarationSyntax)node;
-                //     break;
-                // case SyntaxKind.EnumDeclaration:
-                //     var e = (EnumDeclarationSyntax)node;
-                //     break;
-                // case SyntaxKind.DelegateDeclaration:
-                //     var d = (DelegateDeclarationSyntax)node;
-                //     break;
                 default:
                     Error($"Unsupported type kind: {node.Kind()}");
                     break;
@@ -128,7 +119,7 @@ class Transpiler
         }
         // Show errors sorted by count
         var totalErrors = 0;
-        foreach (var kvp in errorCounts.OrderByDescending(x => x.Value)) {
+        foreach (var kvp in errorCounts.OrderBy(x => x.Value)) {
             var count = kvp.Value;
             totalErrors += count;
             Console.ForegroundColor = ConsoleColor.Red;
@@ -351,13 +342,79 @@ class Transpiler
             return null;
         }
         switch (value.Kind ()) {
+            case SyntaxKind.AddExpression:
+                var add = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(add.Left, model)} + {TranspileExpression(add.Right, model)}";
+            case SyntaxKind.BaseExpression:
+                return "super";
+            case SyntaxKind.CastExpression:
+                var cast = (CastExpressionSyntax)value;
+                return $"{TranspileExpression(cast.Expression, model)} as {GetSwiftTypeName (cast.Type, model)}";
+            case SyntaxKind.DivideExpression:
+                var div = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(div.Left, model)} / {TranspileExpression(div.Right, model)}";
+            case SyntaxKind.ElementAccessExpression:
+                var ea = (ElementAccessExpressionSyntax)value;
+                var eaArgs = string.Join(", ", ea.ArgumentList.Arguments.Select(x => TranspileExpression(x.Expression, model)));
+                return $"{TranspileExpression(ea.Expression, model)}[{eaArgs}]";
+            case SyntaxKind.EqualsExpression:
+                var eq = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(eq.Left, model)} == {TranspileExpression(eq.Right, model)}";
             case SyntaxKind.FalseLiteralExpression:
                 return "false";
-            case SyntaxKind.TrueLiteralExpression:
-                return "true";
+            case SyntaxKind.GreaterThanExpression:
+                var gt = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(gt.Left, model)} > {TranspileExpression(gt.Right, model)}";
+            case SyntaxKind.GreaterThanOrEqualExpression:
+                var gte = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(gte.Left, model)} >= {TranspileExpression(gte.Right, model)}";
+            case SyntaxKind.IdentifierName:
+                var id = (IdentifierNameSyntax)value;
+                return id.Identifier.ToString();
+            case SyntaxKind.InvocationExpression:
+                var inv = (InvocationExpressionSyntax)value;
+                var args = inv.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression, model)).ToArray();
+                return $"{TranspileExpression(inv.Expression, model)}({string.Join(", ", args)})";
+            case SyntaxKind.LessThanExpression:
+                var lt = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(lt.Left, model)} < {TranspileExpression(lt.Right, model)}";
+            case SyntaxKind.LessThanOrEqualExpression:
+                var lte = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(lte.Left, model)} <= {TranspileExpression(lte.Right, model)}";
+            case SyntaxKind.LogicalAndExpression:
+                var and = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(and.Left, model)} && {TranspileExpression(and.Right, model)}";
+            case SyntaxKind.LogicalNotExpression:
+                var not = (PrefixUnaryExpressionSyntax)value;
+                return $"!{TranspileExpression(not.Operand, model)}";
+            case SyntaxKind.LogicalOrExpression:
+                var or = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(or.Left, model)} || {TranspileExpression(or.Right, model)}";
+            case SyntaxKind.MultiplyExpression:
+                var mul = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(mul.Left, model)} * {TranspileExpression(mul.Right, model)}";
+            case SyntaxKind.NotEqualsExpression:
+                var neq = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(neq.Left, model)} != {TranspileExpression(neq.Right, model)}";
+            case SyntaxKind.NullLiteralExpression:
+                return "nil";
             case SyntaxKind.NumericLiteralExpression:
                 var nlit = (LiteralExpressionSyntax)value;
-                return nlit.Token.ValueText;
+                {
+                    var ntext = nlit.Token.Text;
+                    if (ntext[0] == '.')
+                        ntext = "0" + ntext;
+                    return ntext;
+                }
+            case SyntaxKind.ParenthesizedExpression:
+                var paren = (ParenthesizedExpressionSyntax)value;
+                return $"({TranspileExpression(paren.Expression, model)})";
+            case SyntaxKind.SimpleAssignmentExpression:
+                var sae = (AssignmentExpressionSyntax)value;
+                return $"{TranspileExpression(sae.Left, model)} = {TranspileExpression(sae.Right, model)}";
+            case SyntaxKind.SimpleMemberAccessExpression:
+                var sma = (MemberAccessExpressionSyntax)value;
+                return $"{TranspileExpression(sma.Expression, model)}.{sma.Name.ToString()}";
             case SyntaxKind.StringLiteralExpression:
                 var slit = (LiteralExpressionSyntax)value;
                 {
@@ -367,30 +424,16 @@ class Transpiler
                     }
                     return stext;
                 }
-            case SyntaxKind.SimpleMemberAccessExpression:
-                var sma = (MemberAccessExpressionSyntax)value;
-                return $"{TranspileExpression(sma.Expression, model)}.{sma.Name.ToString()}";
-            case SyntaxKind.IdentifierName:
-                var id = (IdentifierNameSyntax)value;
-                return id.ToString();
-            case SyntaxKind.InvocationExpression:
-                var inv = (InvocationExpressionSyntax)value;
-                var args = inv.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression, model)).ToArray();
-                return $"{TranspileExpression(inv.Expression, model)}({string.Join(", ", args)})";
-            // case SyntaxKind.ObjectCreationExpression:
-            //     var obj = (ObjectCreationExpressionSyntax)value;
-            //     var args2 = obj.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression)).ToArray();
-            //     return $"{obj.Type.ToString()}({string.Join(", ", args2)})";
-            case SyntaxKind.CastExpression:
-                var cast = (CastExpressionSyntax)value;
-                return $"{TranspileExpression(cast.Expression, model)} as {GetSwiftTypeName (cast.Type, model)}";
-            case SyntaxKind.NullLiteralExpression:
-                return "nil";
+            case SyntaxKind.SubtractExpression:
+                var sub = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(sub.Left, model)} - {TranspileExpression(sub.Right, model)}";
             case SyntaxKind.ThisExpression:
                 return "self";
-            case SyntaxKind.ParenthesizedExpression:
-                var paren = (ParenthesizedExpressionSyntax)value;
-                return $"({TranspileExpression(paren.Expression, model)})";
+            case SyntaxKind.TrueLiteralExpression:
+                return "true";
+            case SyntaxKind.UnaryMinusExpression:
+                var ume = (PrefixUnaryExpressionSyntax)value;
+                return $"-{TranspileExpression(ume.Operand, model)}";
             default:
                 Error($"Unsupported expression kind: {value.Kind()}");
                 return $"nil/*{value.Kind()}: {value.ToString().Trim()}*/";
@@ -408,8 +451,14 @@ class Transpiler
     void TranspileStatement(StatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
     {
         switch (stmt.Kind()) {
+            case SyntaxKind.Block:
+                TranspileBlock((BlockSyntax)stmt, model, indent, w);
+                break;
             case SyntaxKind.ExpressionStatement:
                 TranspileExpressionStatement((ExpressionStatementSyntax)stmt, model, indent, w);
+                break;
+            case SyntaxKind.IfStatement:
+                TranspileIfStatement((IfStatementSyntax)stmt, model, indent, w);
                 break;
             case SyntaxKind.LocalDeclarationStatement:
                 TranspileLocalDeclarationStatement((LocalDeclarationStatementSyntax)stmt, model, indent, w);
@@ -424,28 +473,23 @@ class Transpiler
         }
     }
 
-    void TranspileReturnStatement(ReturnStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
+    void TranspileExpressionStatement(ExpressionStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
     {
-        var expr = stmt.Expression;
-        if (expr is null)
-            w.WriteLine($"{indent}return");
-        else
-            w.WriteLine($"{indent}return {TranspileExpression(expr, model)}");
+        var expr = TranspileExpression(stmt.Expression, model);
+        w.WriteLine($"{indent}{expr}");
     }
 
-    private void TranspileExpressionStatement(ExpressionStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
+    void TranspileIfStatement(IfStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
     {
-        var expr = stmt.Expression;
-        if (expr is AssignmentExpressionSyntax ae)
+        var cond = TranspileExpression(stmt.Condition, model);
+        w.WriteLine($"{indent}if {cond} {{");
+        TranspileStatement(stmt.Statement, model, indent + "    ", w);
+        if (stmt.Else is { } elseClause)
         {
-            var lhs = TranspileExpression(ae.Left, model);
-            var rhs = TranspileExpression(ae.Right, model);
-            w.WriteLine($"{indent}{lhs} = {rhs}");
+            w.WriteLine($"{indent}}} else {{");
+            TranspileStatement(elseClause.Statement, model, indent + "    ", w);            
         }
-        else
-        {
-            Error($"Unsupported expression statement: {expr.Kind()}");
-        }
+        w.WriteLine($"{indent}}}");
     }
 
     void TranspileLocalDeclarationStatement(LocalDeclarationStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
@@ -458,6 +502,15 @@ class Transpiler
                 init = " = " + init;
             w.WriteLine($"{indent}var {vn}{init}");
         }
+    }
+
+    void TranspileReturnStatement(ReturnStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
+    {
+        var expr = stmt.Expression;
+        if (expr is null)
+            w.WriteLine($"{indent}return");
+        else
+            w.WriteLine($"{indent}return {TranspileExpression(expr, model)}");
     }
 
     static string GetDocs(CSharpSyntaxNode field)
