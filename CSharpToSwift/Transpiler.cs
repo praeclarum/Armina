@@ -356,11 +356,17 @@ class Transpiler
             case SyntaxKind.AddExpression:
                 var add = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(add.Left, model)} + {TranspileExpression(add.Right, model)}";
+            case SyntaxKind.AddAssignmentExpression:
+                var addAssign = (AssignmentExpressionSyntax)value;
+                return $"{TranspileExpression(addAssign.Left, model)} += {TranspileExpression(addAssign.Right, model)}";
             case SyntaxKind.BaseExpression:
                 return "super";
             case SyntaxKind.CastExpression:
                 var cast = (CastExpressionSyntax)value;
                 return $"{TranspileExpression(cast.Expression, model)} as {GetSwiftTypeName (cast.Type, model)}";
+            case SyntaxKind.ConditionalExpression:
+                var cond = (ConditionalExpressionSyntax)value;
+                return $"{TranspileExpression(cond.Condition, model)} ? {TranspileExpression(cond.WhenTrue, model)} : {TranspileExpression(cond.WhenFalse, model)}";
             case SyntaxKind.DivideExpression:
                 var div = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(div.Left, model)} / {TranspileExpression(div.Right, model)}";
@@ -400,6 +406,9 @@ class Transpiler
             case SyntaxKind.LogicalOrExpression:
                 var or = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(or.Left, model)} || {TranspileExpression(or.Right, model)}";
+            case SyntaxKind.ModuloExpression:
+                var mod = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(mod.Left, model)} % {TranspileExpression(mod.Right, model)}";
             case SyntaxKind.MultiplyExpression:
                 var mul = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(mul.Left, model)} * {TranspileExpression(mul.Right, model)}";
@@ -432,6 +441,20 @@ class Transpiler
             case SyntaxKind.ParenthesizedExpression:
                 var paren = (ParenthesizedExpressionSyntax)value;
                 return $"({TranspileExpression(paren.Expression, model)})";
+            case SyntaxKind.PostDecrementExpression:
+                var postDec = (PostfixUnaryExpressionSyntax)value;
+                return $"{TranspileExpression(postDec.Operand, model)} -= 1";
+            case SyntaxKind.PostIncrementExpression:
+                var postInc = (PostfixUnaryExpressionSyntax)value;
+                return $"{TranspileExpression(postInc.Operand, model)} += 1";
+            case SyntaxKind.PredefinedType:
+                return GetSwiftTypeName(value, model);
+            case SyntaxKind.PreDecrementExpression:
+                var preDec = (PrefixUnaryExpressionSyntax)value;
+                return $"{TranspileExpression(preDec.Operand, model)} -= 1";
+            case SyntaxKind.PreIncrementExpression:
+                var preInc = (PrefixUnaryExpressionSyntax)value;
+                return $"{TranspileExpression(preInc.Operand, model)} += 1";
             case SyntaxKind.SimpleAssignmentExpression:
                 var sae = (AssignmentExpressionSyntax)value;
                 return $"{TranspileExpression(sae.Left, model)} = {TranspileExpression(sae.Right, model)}";
@@ -520,17 +543,27 @@ class Transpiler
             case SyntaxKind.Block:
                 TranspileBlock((BlockSyntax)stmt, model, indent, w);
                 break;
+            case SyntaxKind.BreakStatement:
+                w.WriteLine($"{indent}break");
+                break;
             case SyntaxKind.ExpressionStatement:
                 TranspileExpressionStatement((ExpressionStatementSyntax)stmt, model, indent, w);
+                break;
+            case SyntaxKind.ForStatement:
+                TranspileForStatement((ForStatementSyntax)stmt, model, indent, w);
                 break;
             case SyntaxKind.IfStatement:
                 TranspileIfStatement((IfStatementSyntax)stmt, model, indent, w);
                 break;
             case SyntaxKind.LocalDeclarationStatement:
-                TranspileLocalDeclarationStatement((LocalDeclarationStatementSyntax)stmt, model, indent, w);
+                var ld = (LocalDeclarationStatementSyntax)stmt;
+                TranspileVariableDeclaration(ld.Declaration, model, indent, w);
                 break;
             case SyntaxKind.ReturnStatement:
                 TranspileReturnStatement((ReturnStatementSyntax)stmt, model, indent, w);
+                break;
+            case SyntaxKind.WhileStatement:
+                TranspileWhileStatement((WhileStatementSyntax)stmt, model, indent, w);
                 break;
             default:
                 Error($"Unsupported statement {stmt.Kind()}");
@@ -543,6 +576,21 @@ class Transpiler
     {
         var expr = TranspileExpression(stmt.Expression, model);
         w.WriteLine($"{indent}{expr}");
+    }
+
+    void TranspileForStatement(ForStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
+    {
+        if (stmt.Declaration is {} decl) {
+            TranspileVariableDeclaration(decl, model, indent, w);
+        }
+        var cond = stmt.Condition is not null ? TranspileExpression(stmt.Condition, model) : "true";
+        w.WriteLine($"{indent}while {cond} {{");
+        TranspileStatement(stmt.Statement, model, indent + "    ", w);
+        foreach (var incr in stmt.Incrementors) {
+            var expr = TranspileExpression(incr, model);
+            w.WriteLine($"{indent}    {expr}");
+        }
+        w.WriteLine($"{indent}}}");
     }
 
     void TranspileIfStatement(IfStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
@@ -558,20 +606,6 @@ class Transpiler
         w.WriteLine($"{indent}}}");
     }
 
-    void TranspileLocalDeclarationStatement(LocalDeclarationStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
-    {
-        var vtypeName = GetSwiftTypeName(stmt.Declaration.Type, model);
-        foreach (var v in stmt.Declaration.Variables)
-        {
-            var vn = v.Identifier.ToString();
-            var initCode = v.Initializer is not null ? TranspileExpression(v.Initializer.Value, model) : null;
-            if (initCode is not null)
-                initCode = " = " + initCode;
-            
-            w.WriteLine($"{indent}var {vn}: {vtypeName}{initCode}");
-        }
-    }
-
     void TranspileReturnStatement(ReturnStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
     {
         var expr = stmt.Expression;
@@ -579,6 +613,27 @@ class Transpiler
             w.WriteLine($"{indent}return");
         else
             w.WriteLine($"{indent}return {TranspileExpression(expr, model)}");
+    }
+
+    void TranspileVariableDeclaration(VariableDeclarationSyntax decl, SemanticModel model, string indent, TextWriter w)
+    {
+        var vtypeName = GetSwiftTypeName(decl.Type, model);
+        foreach (var v in decl.Variables)
+        {
+            var vn = v.Identifier.ToString();
+            var initCode = v.Initializer is not null ? TranspileExpression(v.Initializer.Value, model) : null;
+            if (initCode is not null)
+                initCode = " = " + initCode;
+            w.WriteLine($"{indent}var {vn}: {vtypeName}{initCode}");
+        }
+    }
+
+    void TranspileWhileStatement(WhileStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
+    {
+        var cond = TranspileExpression(stmt.Condition, model);
+        w.WriteLine($"{indent}while {cond} {{");
+        TranspileStatement(stmt.Statement, model, indent + "    ", w);
+        w.WriteLine($"{indent}}}");
     }
 
     static string GetDocs(CSharpSyntaxNode field)
