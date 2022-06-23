@@ -494,13 +494,15 @@ class Transpiler
 
     void TranspileLocalDeclarationStatement(LocalDeclarationStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
     {
+        var vtypeName = GetSwiftTypeName(stmt.Declaration.Type, model);
         foreach (var v in stmt.Declaration.Variables)
         {
             var vn = v.Identifier.ToString();
             var init = TranspileExpression(v.Initializer?.Value, model);
             if (init is not null)
                 init = " = " + init;
-            w.WriteLine($"{indent}var {vn}{init}");
+            
+            w.WriteLine($"{indent}var {vn}: {vtypeName}{init}");
         }
     }
 
