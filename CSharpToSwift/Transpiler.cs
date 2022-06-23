@@ -217,6 +217,7 @@ class Transpiler
             //     break;
             default:
                 Error($"Unsupported member kind: {member.Kind()}");
+                w.WriteLine($"    /*{member.Kind()}: {member.ToString().Trim()}*/");
                 break;
         }
     }
@@ -372,9 +373,7 @@ class Transpiler
                 var id = (IdentifierNameSyntax)value;
                 return id.Identifier.ToString();
             case SyntaxKind.InvocationExpression:
-                var inv = (InvocationExpressionSyntax)value;
-                var args = inv.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression, model)).ToArray();
-                return $"{TranspileExpression(inv.Expression, model)}({string.Join(", ", args)})";
+                return TranslateInvocationExpression((InvocationExpressionSyntax)value, model);
             case SyntaxKind.LessThanExpression:
                 var lt = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(lt.Left, model)} < {TranspileExpression(lt.Right, model)}";
@@ -404,6 +403,8 @@ class Transpiler
                     var ntext = nlit.Token.Text;
                     if (ntext[0] == '.')
                         ntext = "0" + ntext;
+                    if (ntext[^1] == 'f')
+                        ntext = ntext.Substring(0, ntext.Length - 1);
                     return ntext;
                 }
             case SyntaxKind.ParenthesizedExpression:
@@ -438,6 +439,50 @@ class Transpiler
                 Error($"Unsupported expression kind: {value.Kind()}");
                 return $"nil/*{value.Kind()}: {value.ToString().Trim()}*/";
         }
+    }
+
+    string TranslateInvocationExpression(InvocationExpressionSyntax inv, SemanticModel model)
+    {
+        var exprCode = TranspileExpression(inv.Expression, model);
+        var method = model.GetSymbolInfo(inv).Symbol as IMethodSymbol;
+        if (method == null) {
+            Error($"Method resolution failed: {inv}");
+            var fargs = inv.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression, model)).ToArray();
+            return $"{exprCode}({string.Join(", ", fargs)})";
+        }
+        var parameters = method.Parameters;
+        if (parameters.Length == 0) {
+            return $"{exprCode}()";
+        }
+        var args = inv.ArgumentList.Arguments;
+        var nparams = parameters.Length;
+        var nargs = args.Count;
+        var sb = new System.Text.StringBuilder();
+        sb.Append(exprCode);
+        sb.Append("(");
+        for (var i = 0; i < nparams; i++) {
+            var paramName = parameters[i].Name;
+            if (i > 0)
+                sb.Append(", ");
+            sb.Append(paramName);
+            sb.Append(": ");
+            if (i < nargs) {
+                var arg = args[i];
+                sb.Append(TranspileExpression(arg.Expression, model));
+            } else {
+                Error("Missing argument value");
+            }
+        }
+        if (nargs > nparams) {
+            Error("Too many arguments");
+            for (var i = nparams; i < nargs; i++) {
+                var arg = args[i];
+                sb.Append(", ");
+                sb.Append(TranspileExpression(arg.Expression, model));
+            }
+        }
+        sb.Append(")");
+        return sb.ToString();
     }
 
     void TranspileBlock(BlockSyntax block, SemanticModel model, string indent, TextWriter w)
