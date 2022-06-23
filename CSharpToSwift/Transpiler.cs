@@ -34,7 +34,7 @@ class Transpiler
     void Info(string message)
     {
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine($"{DateTime.Now.ToString("HH:mm:ss")} {message}");
+        Console.WriteLine(message);
         Console.ResetColor();
     }
     
@@ -111,25 +111,40 @@ class Transpiler
                         TranspileStruct(swiftName, s, symbol, model, sw);
                     }
                     break;
-                case SyntaxKind.InterfaceDeclaration:
-                    var i = (InterfaceDeclarationSyntax)node;
-                    break;
-                case SyntaxKind.EnumDeclaration:
-                    var e = (EnumDeclarationSyntax)node;
-                    break;
-                case SyntaxKind.DelegateDeclaration:
-                    var d = (DelegateDeclarationSyntax)node;
+                // case SyntaxKind.InterfaceDeclaration:
+                //     var i = (InterfaceDeclarationSyntax)node;
+                //     break;
+                // case SyntaxKind.EnumDeclaration:
+                //     var e = (EnumDeclarationSyntax)node;
+                //     break;
+                // case SyntaxKind.DelegateDeclaration:
+                //     var d = (DelegateDeclarationSyntax)node;
+                //     break;
+                default:
+                    Error($"Unsupported type kind: {node.Kind()}");
                     break;
             }
         }
         // Show errors sorted by count
+        var totalErrors = 0;
         foreach (var kvp in errorCounts.OrderByDescending(x => x.Value)) {
             var count = kvp.Value;
+            totalErrors += count;
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"{DateTime.Now.ToString("HH:mm:ss")} {kvp.Key} ({count}x)");
+            Console.Write($"Error:");
+            Console.ResetColor();
+            Console.WriteLine($" {kvp.Key} ({count}x)");
+        }
+        if (totalErrors > 0) {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"{totalErrors} errors");
             Console.ResetColor();
         }
-        Info("Done.");
+        else {
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine("OK");
+            Console.ResetColor();
+        }
     }
 
     void TranspileClass(string swiftName, ClassDeclarationSyntax node, INamedTypeSymbol symbol, SemanticModel model, TextWriter w)
@@ -169,19 +184,20 @@ class Transpiler
         w.WriteLine($"}}");
     }
 
-    void TranspileClassOrStructMember(MemberDeclarationSyntax member, string typeName, TypeDeclarationSyntax node, INamedTypeSymbol symbol, SemanticModel model, TextWriter w)
+    void TranspileClassOrStructMember(MemberDeclarationSyntax member, string typeName, TypeDeclarationSyntax node, INamedTypeSymbol typeSymbol, SemanticModel model, TextWriter w)
     {
         switch (member.Kind ()) {
-            // case SyntaxKind.ConstructorDeclaration:
-            //     var ctor = (ConstructorDeclarationSyntax)member;
-            //     TranspileConstructor(ctor, symbol, w);
-            //     break;
-            // case SyntaxKind.PropertyDeclaration:
-            //     var prop = (PropertyDeclarationSyntax)member;
-            //     TranspileProperty(prop, symbol, w);
-            //     break;
+            case SyntaxKind.ConstructorDeclaration:
+                TranspileCtor((ConstructorDeclarationSyntax)member, typeSymbol, model, w);
+                break;
+            case SyntaxKind.FieldDeclaration:
+                TranspileField((FieldDeclarationSyntax)member, typeSymbol, model, w);
+                break;
             case SyntaxKind.MethodDeclaration:
-                TranspileMethod((MethodDeclarationSyntax)member, symbol, model, w);
+                TranspileMethod((MethodDeclarationSyntax)member, typeSymbol, model, w);
+                break;
+            case SyntaxKind.PropertyDeclaration:
+                TranspileProperty((PropertyDeclarationSyntax)member, typeSymbol, model, w);
                 break;
             // case SyntaxKind.EventDeclaration:
             //     var evt = (EventDeclarationSyntax)member;
@@ -195,9 +211,6 @@ class Transpiler
             //     var evtField = (EventFieldDeclarationSyntax)member;
             //     TranspileEventField(evtField, symbol, w);
             //     break;
-            case SyntaxKind.FieldDeclaration:
-                TranspileField((FieldDeclarationSyntax)member, symbol, model, w);
-                break;
             // case SyntaxKind.ConstantFieldDeclaration:
             //     var constField = (ConstantFieldDeclarationSyntax)member;
             //     TranspileConstantField(constField, symbol, w);
@@ -211,7 +224,7 @@ class Transpiler
             //     TranspileEventAccessor(evtAccessor, symbol, w);
             //     break;
             default:
-                // Error($"Unhandled member kind {member.Kind()}");
+                Error($"Unsupported member kind: {member.Kind()}");
                 break;
         }
     }
@@ -229,9 +242,9 @@ class Transpiler
         foreach (var v in field.Declaration.Variables)
         {
             var fieldSymbol = model.GetDeclaredSymbol(v);
-            var acc = GetAcc(fieldSymbol);
+            var acc = GetAccessibility(fieldSymbol);
             var vn = v.Identifier.ToString();
-            var init = TranspileExpression(v.Initializer?.Value);
+            var init = TranspileExpression(v.Initializer?.Value, model);
             if (!isReadOnly)
                 init = GetDefaultValue(type);
             var typeSuffix = init == "nil" ? "?" : "";
@@ -243,6 +256,21 @@ class Transpiler
         }
     }
 
+    void TranspileCtor(ConstructorDeclarationSyntax ctor, INamedTypeSymbol containerTypeSymbol, SemanticModel model, TextWriter w)
+    {
+        var docs = GetDocs(ctor);
+        if (docs.Length > 0)
+            w.WriteLine($"    /// {docs}");
+        var methodSymbol = model.GetDeclaredSymbol(ctor);
+        var acc = GetAccessibility(methodSymbol);
+        var isStatic = ctor.Modifiers.Any(x => x.IsKind(SyntaxKind.StaticKeyword));
+        var slotType = isStatic ? "static " : "";
+        w.Write($"    {acc}{slotType}init(");
+        TranspileParams(ctor.ParameterList, model, w);
+        w.WriteLine($") {{");
+        w.WriteLine($"    }}");
+    }
+
     void TranspileMethod(MethodDeclarationSyntax method, INamedTypeSymbol containerTypeSymbol, SemanticModel model, TextWriter w)
     {
         var docs = GetDocs(method);
@@ -252,19 +280,28 @@ class Transpiler
         var isVoid = IsTypeVoid(returnType);
         var returnTypeCode = isVoid ? "" : $" -> {GetSwiftTypeName(returnType)}";
         var methodSymbol = model.GetDeclaredSymbol(method);
-        var acc = GetAcc(methodSymbol);
+        var acc = GetAccessibility(methodSymbol);
         var isStatic = method.Modifiers.Any(x => x.IsKind(SyntaxKind.StaticKeyword));
         var isOverride = method.Modifiers.Any(x => x.IsKind(SyntaxKind.OverrideKeyword));
         var isSealed = method.Modifiers.Any(x => x.IsKind(SyntaxKind.SealedKeyword));
         var isAbstract = method.Modifiers.Any(x => x.IsKind(SyntaxKind.AbstractKeyword));
         var isVirtual = method.Modifiers.Any(x => x.IsKind(SyntaxKind.VirtualKeyword));
-        if (isAbstract) {
+        if (isAbstract)
+        {
             Error("Abstract methods are not supported");
         }
+        // acc = acc + $"/*{method.Modifiers}*/";
         var slotType = isStatic ? "static " : (isOverride ? "override " : (isAbstract ? "/*abstract*/ " : (isVirtual ? "" : "final ")));
         w.Write($"    {acc}{slotType}func {method.Identifier.ToString()}(");
+        TranspileParams(method.ParameterList, model, w);
+        w.WriteLine($"){returnTypeCode} {{");
+        w.WriteLine($"    }}");
+    }
+
+    private void TranspileParams(ParameterListSyntax parameterList, SemanticModel model, TextWriter w)
+    {
         var head = "";
-        foreach (var p in method.ParameterList.Parameters)
+        foreach (var p in parameterList.Parameters)
         {
             var ptypeSymbol = model.GetSymbolInfo(p.Type).Symbol;
             var ptypeName = GetSwiftTypeName(ptypeSymbol);
@@ -272,7 +309,34 @@ class Transpiler
             w.Write($"{head}{pname}: {ptypeName}");
             head = ", ";
         }
-        w.WriteLine($"){returnTypeCode} {{");
+    }
+
+    void TranspileProperty(PropertyDeclarationSyntax prop, INamedTypeSymbol containerTypeSymbol, SemanticModel model, TextWriter w)
+    {
+        var docs = GetDocs(prop);
+        if (docs.Length > 0)
+            w.WriteLine($"    /// {docs}");
+        var returnType = model.GetSymbolInfo(prop.Type).Symbol;
+        var isReadOnly = prop.Modifiers.Any(x => x.IsKind(SyntaxKind.ReadOnlyKeyword));
+        var isStatic = prop.Modifiers.Any(x => x.IsKind(SyntaxKind.StaticKeyword));
+        var isOverride = prop.Modifiers.Any(x => x.IsKind(SyntaxKind.OverrideKeyword));
+        var isSealed = prop.Modifiers.Any(x => x.IsKind(SyntaxKind.SealedKeyword));
+        var isAbstract = prop.Modifiers.Any(x => x.IsKind(SyntaxKind.AbstractKeyword));
+        var isVirtual = prop.Modifiers.Any(x => x.IsKind(SyntaxKind.VirtualKeyword));
+        var getSlotType = isStatic ? "static " : (isOverride ? "override " : (isAbstract ? "/*abstract*/ " : (isVirtual ? "" : "final ")));
+        var decl = isReadOnly ? (isStatic ? "static let" : "let") : (isStatic ? "static var" : "var");
+        var vn = prop.Identifier.ToString();
+        var init = TranspileExpression(prop.Initializer?.Value, model);
+        if (init is not null)
+            init = " = " + init;
+        w.WriteLine($"    {getSlotType}{decl} {vn}: {GetSwiftTypeName(returnType)}{init} {{");
+        if (prop.AccessorList is {} alist) {
+            foreach (var accessor in alist.Accessors)
+            {
+                var acc = GetAccessibility(accessor, model);
+                w.WriteLine($"        {accessor.Keyword} {{}}");
+            }
+        }
         w.WriteLine($"    }}");
     }
 
@@ -295,11 +359,17 @@ class Transpiler
         return string.Join(" ", lines);
     }
 
-    static string GetAcc(ISymbol? symbol)
+    static string GetAccessibility(CSharpSyntaxNode node, SemanticModel model)
     {
-        if (symbol is null)
+        var memberSymbol = model.GetSymbolInfo(node).Symbol;
+        return GetAccessibility(memberSymbol);
+    }
+
+    static string GetAccessibility(ISymbol? memberSymbol)
+    {
+        if (memberSymbol is null)
             return "";
-        return symbol.DeclaredAccessibility switch
+        return memberSymbol.DeclaredAccessibility switch
         {
             Accessibility.Private => "private ",
             Accessibility.Protected => "",
@@ -307,6 +377,12 @@ class Transpiler
             Accessibility.Public => "",
             _ => "",
         };
+    }
+
+    string GetSwiftTypeName(CSharpSyntaxNode type, SemanticModel model)
+    {
+        var typeSymbol = model.GetSymbolInfo(type).Symbol;
+        return GetSwiftTypeName(typeSymbol);
     }
 
     string GetSwiftTypeName(ISymbol? s)
@@ -395,17 +471,17 @@ class Transpiler
                             return "nil";
                         }
                         else {
-                            Error($"Unhandled default value for named type: {type.Name}");
+                            Error($"Unsupported default value for named type: {type.Name}");
                             return $"0/*NT:{type.Name}*/";
                         }
                 }
             default:
-                Error($"Unhandled default value for type {type.Kind}");
+                Error($"Unsupported default value for type {type.Kind}");
                 return $"nil/*T:{type.Kind}*/";
         }
     }
 
-    string? TranspileExpression(ExpressionSyntax? value)
+    string? TranspileExpression(ExpressionSyntax? value, SemanticModel model)
     {
         if (value is null) {
             return null;
@@ -429,30 +505,30 @@ class Transpiler
                 }
             case SyntaxKind.SimpleMemberAccessExpression:
                 var sma = (MemberAccessExpressionSyntax)value;
-                return $"{TranspileExpression(sma.Expression)}.{sma.Name.ToString()}";
+                return $"{TranspileExpression(sma.Expression, model)}.{sma.Name.ToString()}";
             case SyntaxKind.IdentifierName:
                 var id = (IdentifierNameSyntax)value;
                 return id.ToString();
             case SyntaxKind.InvocationExpression:
                 var inv = (InvocationExpressionSyntax)value;
-                var args = inv.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression)).ToArray();
-                return $"{TranspileExpression(inv.Expression)}({string.Join(", ", args)})";
+                var args = inv.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression, model)).ToArray();
+                return $"{TranspileExpression(inv.Expression, model)}({string.Join(", ", args)})";
             // case SyntaxKind.ObjectCreationExpression:
             //     var obj = (ObjectCreationExpressionSyntax)value;
             //     var args2 = obj.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression)).ToArray();
             //     return $"{obj.Type.ToString()}({string.Join(", ", args2)})";
             case SyntaxKind.CastExpression:
                 var cast = (CastExpressionSyntax)value;
-                return $"{TranspileExpression(cast.Expression)} as {cast.Type}";
+                return $"{TranspileExpression(cast.Expression, model)} as {GetSwiftTypeName (cast.Type, model)}";
             case SyntaxKind.NullLiteralExpression:
                 return "nil";
             case SyntaxKind.ThisExpression:
                 return "self";
             case SyntaxKind.ParenthesizedExpression:
                 var paren = (ParenthesizedExpressionSyntax)value;
-                return $"({TranspileExpression(paren.Expression)})";
+                return $"({TranspileExpression(paren.Expression, model)})";
             default:
-                Error($"Unhandled expression kind {value.Kind()}");
+                Error($"Unsupported expression kind: {value.Kind()}");
                 return $"nil/*E:{value.Kind()}*/";
         }
     }
@@ -472,35 +548,35 @@ class Transpiler
             case SyntaxKind.ClassDeclaration:
                 var c = (ClassDeclarationSyntax)node;
                 if (model.GetDeclaredSymbol(c) is INamedTypeSymbol ctype) {
-                    Info($"Found class {ctype.ContainingNamespace}.{ctype.Name}");
+                    // Info($"Found class {ctype.ContainingNamespace}.{ctype.Name}");
                     types.Add((c, model));
                 }
                 break;
             case SyntaxKind.StructDeclaration:
                 var s = (StructDeclarationSyntax)node;
                 if (model.GetDeclaredSymbol(s) is INamedTypeSymbol stype) {
-                    Info($"Found struct {stype.ContainingNamespace}.{stype.Name}");
+                    // Info($"Found struct {stype.ContainingNamespace}.{stype.Name}");
                     types.Add((s, model));
                 }
                 break;
             case SyntaxKind.InterfaceDeclaration:
                 var i = (InterfaceDeclarationSyntax)node;
                 if (model.GetDeclaredSymbol(i) is INamedTypeSymbol itype) {
-                    Info($"Found interface {itype.ContainingNamespace}.{itype.Name} {itype.GetType()}");
+                    // Info($"Found interface {itype.ContainingNamespace}.{itype.Name} {itype.GetType()}");
                     types.Add((i, model));
                 }
                 break;
             case SyntaxKind.EnumDeclaration:
                 var e = (EnumDeclarationSyntax)node;
                 if (model.GetDeclaredSymbol(e) is INamedTypeSymbol etype) {
-                    Info($"Found enum {etype.ContainingNamespace}.{etype.Name}");
+                    // Info($"Found enum {etype.ContainingNamespace}.{etype.Name}");
                     types.Add((e, model));
                 }
                 break;
             case SyntaxKind.DelegateDeclaration:
                 var d = (DelegateDeclarationSyntax)node;
                 if (model.GetDeclaredSymbol(d) is INamedTypeSymbol dtype) {
-                    Info($"Found delegate {dtype.ContainingNamespace}.{dtype.Name}");
+                    // Info($"Found delegate {dtype.ContainingNamespace}.{dtype.Name}");
                     types.Add((d, model));
                 }
                 break;
