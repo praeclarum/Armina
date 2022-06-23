@@ -24,11 +24,12 @@ class Transpiler
         Microsoft.Build.Locator.MSBuildLocator.RegisterDefaults();
         var _ = typeof(Microsoft.CodeAnalysis.CSharp.Formatting.CSharpFormattingOptions);
     }
+    readonly Dictionary<string, int> errorCounts = new Dictionary<string, int> ();
     void Error(string message)
     {
-        Console.ForegroundColor = ConsoleColor.Red;
-        Console.WriteLine($"{DateTime.Now.ToString("HH:mm:ss")} {message}");
-        Console.ResetColor();
+        if (!errorCounts.ContainsKey(message))
+            errorCounts[message] = 0;
+        errorCounts[message]++; 
     }
     void Info(string message)
     {
@@ -120,6 +121,13 @@ class Transpiler
                     var d = (DelegateDeclarationSyntax)node;
                     break;
             }
+        }
+        // Show errors sorted by count
+        foreach (var kvp in errorCounts.OrderByDescending(x => x.Value)) {
+            var count = kvp.Value;
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"{DateTime.Now.ToString("HH:mm:ss")} {kvp.Key} ({count}x)");
+            Console.ResetColor();
         }
         Info("Done.");
     }
@@ -218,7 +226,6 @@ class Transpiler
         var isStatic = field.Modifiers.Any(x => x.IsKind(SyntaxKind.StaticKeyword));
         var decl = isReadOnly ? (isStatic ? "static let" : "let") : (isStatic ? "static var" : "var");
         
-        
         foreach (var v in field.Declaration.Variables)
         {
             var fieldSymbol = model.GetDeclaredSymbol(v);
@@ -243,10 +250,29 @@ class Transpiler
             w.WriteLine($"    /// {docs}");
         var returnType = model.GetSymbolInfo(method.ReturnType).Symbol;
         var isVoid = IsTypeVoid(returnType);
-        var returnTypeName = isVoid ? "" : $" -> {GetSwiftTypeName(returnType)}";
+        var returnTypeCode = isVoid ? "" : $" -> {GetSwiftTypeName(returnType)}";
         var methodSymbol = model.GetDeclaredSymbol(method);
         var acc = GetAcc(methodSymbol);
-        w.WriteLine($"    {acc}func {method.Identifier.ToString()}(){returnTypeName} {{");
+        var isStatic = method.Modifiers.Any(x => x.IsKind(SyntaxKind.StaticKeyword));
+        var isOverride = method.Modifiers.Any(x => x.IsKind(SyntaxKind.OverrideKeyword));
+        var isSealed = method.Modifiers.Any(x => x.IsKind(SyntaxKind.SealedKeyword));
+        var isAbstract = method.Modifiers.Any(x => x.IsKind(SyntaxKind.AbstractKeyword));
+        var isVirtual = method.Modifiers.Any(x => x.IsKind(SyntaxKind.VirtualKeyword));
+        if (isAbstract) {
+            Error("Abstract methods are not supported");
+        }
+        var slotType = isStatic ? "static " : (isOverride ? "override " : (isAbstract ? "/*abstract*/ " : (isVirtual ? "" : "final ")));
+        w.Write($"    {acc}{slotType}func {method.Identifier.ToString()}(");
+        var head = "";
+        foreach (var p in method.ParameterList.Parameters)
+        {
+            var ptypeSymbol = model.GetSymbolInfo(p.Type).Symbol;
+            var ptypeName = GetSwiftTypeName(ptypeSymbol);
+            var pname = p.Identifier.ToString();
+            w.Write($"{head}{pname}: {ptypeName}");
+            head = ", ";
+        }
+        w.WriteLine($"){returnTypeCode} {{");
         w.WriteLine($"    }}");
     }
 
