@@ -237,15 +237,15 @@ class Transpiler
             var fieldSymbol = model.GetDeclaredSymbol(v);
             var acc = GetAccessLevelModifier(fieldSymbol);
             var vn = v.Identifier.ToString();
-            var init = TranspileExpression(v.Initializer?.Value, model);
+            var initCode = v.Initializer is not null ? TranspileExpression(v.Initializer.Value, model) : null;
             if (!isReadOnly)
-                init = GetDefaultValue(type);
-            var typeSuffix = init == "nil" ? "?" : "";
-            if (init is not null)
-                init = " = " + init;
+                initCode = GetDefaultValue(type);
+            var typeSuffix = initCode == "nil" ? "?" : "";
+            if (initCode is not null)
+                initCode = " = " + initCode;
             if (docs.Length > 0)
                 w.WriteLine($"    /// {docs}");
-            w.WriteLine($"    {acc}{decl} {vn}: {ftypeName}{typeSuffix}{init}");
+            w.WriteLine($"    {acc}{decl} {vn}: {ftypeName}{typeSuffix}{initCode}");
         }
     }
 
@@ -303,11 +303,18 @@ class Transpiler
         foreach (var p in parameterList.Parameters)
         {
             var ptypeSymbol = model.GetSymbolInfo(p.Type).Symbol;
+            var isArray = IsArray(ptypeSymbol);
             var ptypeName = GetSwiftTypeName(ptypeSymbol);
             var pname = p.Identifier.ToString();
-            w.Write($"{head}{pname}: {ptypeName}");
+            var refMod = isArray ? "inout " : "";
+            w.Write($"{head}{pname}: {refMod}{ptypeName}");
             head = ", ";
         }
+    }
+
+    static bool IsArray(ISymbol? ptypeSymbol)
+    {
+        return ptypeSymbol is IArrayTypeSymbol;
     }
 
     void TranspileProperty(PropertyDeclarationSyntax prop, INamedTypeSymbol containerTypeSymbol, SemanticModel model, TextWriter w)
@@ -318,10 +325,10 @@ class Transpiler
         var returnType = model.GetSymbolInfo(prop.Type).Symbol;
         string slotType = GetSlotTypeModifier(prop);
         var vn = prop.Identifier.ToString();
-        var init = TranspileExpression(prop.Initializer?.Value, model);
-        if (init is not null)
-            init = " = " + init;
-        w.WriteLine($"    {slotType}var {vn}: {GetSwiftTypeName(returnType)}{init} {{");
+        var initCode = prop.Initializer is not null ? TranspileExpression(prop.Initializer.Value, model) : null;
+        if (initCode is not null)
+            initCode = " = " + initCode;
+        w.WriteLine($"    {slotType}var {vn}: {GetSwiftTypeName(returnType)}{initCode} {{");
         if (prop.AccessorList is { } alist)
         {
             foreach (var accessor in alist.Accessors)
@@ -337,11 +344,8 @@ class Transpiler
         w.WriteLine($"    }}");
     }
 
-    string? TranspileExpression(ExpressionSyntax? value, SemanticModel model)
+    string TranspileExpression(ExpressionSyntax value, SemanticModel model)
     {
-        if (value is null) {
-            return null;
-        }
         switch (value.Kind ()) {
             case SyntaxKind.AddExpression:
                 var add = (BinaryExpressionSyntax)value;
@@ -373,7 +377,8 @@ class Transpiler
                 var id = (IdentifierNameSyntax)value;
                 return id.Identifier.ToString();
             case SyntaxKind.InvocationExpression:
-                return TranslateInvocationExpression((InvocationExpressionSyntax)value, model);
+                var inv = (InvocationExpressionSyntax)value;
+                return TranspileInvocation(TranspileExpression(inv.Expression, model), inv, inv.ArgumentList, model);
             case SyntaxKind.LessThanExpression:
                 var lt = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(lt.Left, model)} < {TranspileExpression(lt.Right, model)}";
@@ -407,6 +412,10 @@ class Transpiler
                         ntext = ntext.Substring(0, ntext.Length - 1);
                     return ntext;
                 }
+            case SyntaxKind.ObjectCreationExpression:
+                var oce = (ObjectCreationExpressionSyntax)value;
+                var oceType = model.GetSymbolInfo(oce.Type).Symbol;
+                return TranspileInvocation(GetSwiftTypeName (oceType), oce, oce.ArgumentList, model);
             case SyntaxKind.ParenthesizedExpression:
                 var paren = (ParenthesizedExpressionSyntax)value;
                 return $"({TranspileExpression(paren.Expression, model)})";
@@ -441,20 +450,19 @@ class Transpiler
         }
     }
 
-    string TranslateInvocationExpression(InvocationExpressionSyntax inv, SemanticModel model)
+    string TranspileInvocation(string exprCode, SyntaxNode invokeNode, ArgumentListSyntax argList, SemanticModel model)
     {
-        var exprCode = TranspileExpression(inv.Expression, model);
-        var method = model.GetSymbolInfo(inv).Symbol as IMethodSymbol;
+        var method = model.GetSymbolInfo(invokeNode).Symbol as IMethodSymbol;
         if (method == null) {
-            Error($"Method resolution failed: {inv}");
-            var fargs = inv.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression, model)).ToArray();
+            Error($"Method resolution failed: {invokeNode}");
+            var fargs = argList.Arguments.Select(a => TranspileExpression(a.Expression, model)).ToArray();
             return $"{exprCode}({string.Join(", ", fargs)})";
         }
         var parameters = method.Parameters;
         if (parameters.Length == 0) {
             return $"{exprCode}()";
         }
-        var args = inv.ArgumentList.Arguments;
+        var args = argList.Arguments;
         var nparams = parameters.Length;
         var nargs = args.Count;
         var sb = new System.Text.StringBuilder();
@@ -543,11 +551,11 @@ class Transpiler
         foreach (var v in stmt.Declaration.Variables)
         {
             var vn = v.Identifier.ToString();
-            var init = TranspileExpression(v.Initializer?.Value, model);
-            if (init is not null)
-                init = " = " + init;
+            var initCode = v.Initializer is not null ? TranspileExpression(v.Initializer.Value, model) : null;
+            if (initCode is not null)
+                initCode = " = " + initCode;
             
-            w.WriteLine($"{indent}var {vn}: {vtypeName}{init}");
+            w.WriteLine($"{indent}var {vn}: {vtypeName}{initCode}");
         }
     }
 
