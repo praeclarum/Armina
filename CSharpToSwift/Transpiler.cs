@@ -172,10 +172,9 @@ class Transpiler
             //     var prop = (PropertyDeclarationSyntax)member;
             //     TranspileProperty(prop, symbol, w);
             //     break;
-            // case SyntaxKind.MethodDeclaration:
-            //     var method = (MethodDeclarationSyntax)member;
-            //     TranspileMethod(method, symbol, w);
-            //     break;
+            case SyntaxKind.MethodDeclaration:
+                TranspileMethod((MethodDeclarationSyntax)member, symbol, model, w);
+                break;
             // case SyntaxKind.EventDeclaration:
             //     var evt = (EventDeclarationSyntax)member;
             //     TranspileEvent(evt, symbol, w);
@@ -189,27 +188,7 @@ class Transpiler
             //     TranspileEventField(evtField, symbol, w);
             //     break;
             case SyntaxKind.FieldDeclaration:
-                var field = (FieldDeclarationSyntax)member;
-                {
-                    var docs = GetDocs(field);
-                    var type = model.GetSymbolInfo(field.Declaration.Type).Symbol;
-                    var ftypeName = GetSwiftTypeName(type);
-                    var isReadOnly = field.Modifiers.Any(x => x.IsKind(SyntaxKind.ReadOnlyKeyword));
-                    var decl = isReadOnly ? (symbol.IsStatic ? "static let" : "let") : (symbol.IsStatic ? "static var" : "var");
-                    foreach (var v in field.Declaration.Variables)
-                    {
-                        var vn = v.Identifier.ToString();
-                        var init = TranspileExpression(v.Initializer?.Value);
-                        if (!isReadOnly)
-                            init = GetDefaultValue(type);
-                        var typeSuffix = init == "nil" ? "?" : "";
-                        if (init is not null)
-                            init = " = " + init;
-                        if (docs.Length > 0)
-                            w.WriteLine($"    /// {docs}");
-                        w.WriteLine($"    {decl} {vn}: {ftypeName}{typeSuffix}{init}");
-                    }
-                }
+                TranspileField((FieldDeclarationSyntax)member, symbol, model, w);
                 break;
             // case SyntaxKind.ConstantFieldDeclaration:
             //     var constField = (ConstantFieldDeclarationSyntax)member;
@@ -229,7 +208,49 @@ class Transpiler
         }
     }
 
-    private static string GetDocs(CSharpSyntaxNode field)
+    void TranspileField(FieldDeclarationSyntax field, INamedTypeSymbol containerTypeSymbol, SemanticModel model, TextWriter w)
+    {
+        var docs = GetDocs(field);
+        var type = model.GetSymbolInfo(field.Declaration.Type).Symbol;
+        
+        var ftypeName = GetSwiftTypeName(type);
+        var isReadOnly = field.Modifiers.Any(x => x.IsKind(SyntaxKind.ReadOnlyKeyword));
+        var isStatic = field.Modifiers.Any(x => x.IsKind(SyntaxKind.StaticKeyword));
+        var decl = isReadOnly ? (isStatic ? "static let" : "let") : (isStatic ? "static var" : "var");
+        
+        
+        foreach (var v in field.Declaration.Variables)
+        {
+            var fieldSymbol = model.GetDeclaredSymbol(v);
+            var acc = GetAcc(fieldSymbol);
+            var vn = v.Identifier.ToString();
+            var init = TranspileExpression(v.Initializer?.Value);
+            if (!isReadOnly)
+                init = GetDefaultValue(type);
+            var typeSuffix = init == "nil" ? "?" : "";
+            if (init is not null)
+                init = " = " + init;
+            if (docs.Length > 0)
+                w.WriteLine($"    /// {docs}");
+            w.WriteLine($"    {acc}{decl} {vn}: {ftypeName}{typeSuffix}{init}");
+        }
+    }
+
+    void TranspileMethod(MethodDeclarationSyntax method, INamedTypeSymbol containerTypeSymbol, SemanticModel model, TextWriter w)
+    {
+        var docs = GetDocs(method);
+        if (docs.Length > 0)
+            w.WriteLine($"    /// {docs}");
+        var returnType = model.GetSymbolInfo(method.ReturnType).Symbol;
+        var isVoid = IsTypeVoid(returnType);
+        var returnTypeName = isVoid ? "" : $" -> {GetSwiftTypeName(returnType)}";
+        var methodSymbol = model.GetDeclaredSymbol(method);
+        var acc = GetAcc(methodSymbol);
+        w.WriteLine($"    {acc}func {method.Identifier.ToString()}(){returnTypeName} {{");
+        w.WriteLine($"    }}");
+    }
+
+    static string GetDocs(CSharpSyntaxNode field)
     {
         var lines =
             field.GetLeadingTrivia()
@@ -239,11 +260,27 @@ class Transpiler
                 x
                 .Replace("<summary>", "")
                 .Replace("</summary>", "")
+                .Replace("<b>", "**")
+                .Replace("</b>", "**")
                 .Replace("///", "")
                 .Replace("\t", " ")
                 .Trim())
             .Where(x => x.Length > 0);
         return string.Join(" ", lines);
+    }
+
+    static string GetAcc(ISymbol? symbol)
+    {
+        if (symbol is null)
+            return "";
+        return symbol.DeclaredAccessibility switch
+        {
+            Accessibility.Private => "private ",
+            Accessibility.Protected => "",
+            Accessibility.Internal => "internal ",
+            Accessibility.Public => "",
+            _ => "",
+        };
     }
 
     string GetSwiftTypeName(ISymbol? s)
@@ -277,6 +314,11 @@ class Transpiler
                     return name;
             }
         }
+    }
+
+    bool IsTypeVoid(ISymbol? returnType)
+    {
+        return returnType is null || (returnType.Name == "Void" && returnType.ContainingNamespace.Name == "System");
     }
 
     string GetDefaultValue(ISymbol? type)
