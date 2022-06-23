@@ -470,6 +470,9 @@ class Transpiler
                     }
                     return stext;
                 }
+            case SyntaxKind.SubtractAssignmentExpression:
+                var subAssign = (AssignmentExpressionSyntax)value;
+                return $"{TranspileExpression(subAssign.Left, model)} -= {TranspileExpression(subAssign.Right, model)}";
             case SyntaxKind.SubtractExpression:
                 var sub = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(sub.Left, model)} - {TranspileExpression(sub.Right, model)}";
@@ -515,6 +518,7 @@ class Transpiler
                 sb.Append(TranspileExpression(arg.Expression, model));
             } else {
                 Error("Missing argument value");
+                sb.Append("nil/*missing*/");
             }
         }
         if (nargs > nparams) {
@@ -523,6 +527,7 @@ class Transpiler
                 var arg = args[i];
                 sb.Append(", ");
                 sb.Append(TranspileExpression(arg.Expression, model));
+                sb.Append("/*extra*/");
             }
         }
         sb.Append(")");
@@ -679,9 +684,9 @@ class Transpiler
             return "";
         return memberSymbol.DeclaredAccessibility switch
         {
-            Accessibility.Private => "private ",
+            Accessibility.Private => "",
             Accessibility.Protected => "",
-            Accessibility.Internal => "internal ",
+            Accessibility.Internal => "",
             Accessibility.Public => "",
             _ => "",
         };
