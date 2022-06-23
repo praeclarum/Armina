@@ -269,6 +269,9 @@ class Transpiler
         w.Write($"    {acc}{slotType}init(");
         TranspileParams(ctor.ParameterList, model, w);
         w.WriteLine($") {{");
+        if (ctor.Body is {} block) {
+            TranspileBlock(block, model, "        ", w);
+        }
         w.WriteLine($"    }}");
     }
 
@@ -342,6 +345,58 @@ class Transpiler
         w.WriteLine($"    }}");
     }
 
+    string? TranspileExpression(ExpressionSyntax? value, SemanticModel model)
+    {
+        if (value is null) {
+            return null;
+        }
+        switch (value.Kind ()) {
+            case SyntaxKind.FalseLiteralExpression:
+                return "false";
+            case SyntaxKind.TrueLiteralExpression:
+                return "true";
+            case SyntaxKind.NumericLiteralExpression:
+                var nlit = (LiteralExpressionSyntax)value;
+                return nlit.Token.ValueText;
+            case SyntaxKind.StringLiteralExpression:
+                var slit = (LiteralExpressionSyntax)value;
+                {
+                    var stext = slit.GetText().ToString();
+                    if (stext.Length > 0 && stext[0] == '@') {
+                        stext = "\"\"\"\n" + slit.Token.ValueText + "\n\"\"\"";
+                    }
+                    return stext;
+                }
+            case SyntaxKind.SimpleMemberAccessExpression:
+                var sma = (MemberAccessExpressionSyntax)value;
+                return $"{TranspileExpression(sma.Expression, model)}.{sma.Name.ToString()}";
+            case SyntaxKind.IdentifierName:
+                var id = (IdentifierNameSyntax)value;
+                return id.ToString();
+            case SyntaxKind.InvocationExpression:
+                var inv = (InvocationExpressionSyntax)value;
+                var args = inv.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression, model)).ToArray();
+                return $"{TranspileExpression(inv.Expression, model)}({string.Join(", ", args)})";
+            // case SyntaxKind.ObjectCreationExpression:
+            //     var obj = (ObjectCreationExpressionSyntax)value;
+            //     var args2 = obj.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression)).ToArray();
+            //     return $"{obj.Type.ToString()}({string.Join(", ", args2)})";
+            case SyntaxKind.CastExpression:
+                var cast = (CastExpressionSyntax)value;
+                return $"{TranspileExpression(cast.Expression, model)} as {GetSwiftTypeName (cast.Type, model)}";
+            case SyntaxKind.NullLiteralExpression:
+                return "nil";
+            case SyntaxKind.ThisExpression:
+                return "self";
+            case SyntaxKind.ParenthesizedExpression:
+                var paren = (ParenthesizedExpressionSyntax)value;
+                return $"({TranspileExpression(paren.Expression, model)})";
+            default:
+                Error($"Unsupported expression kind: {value.Kind()}");
+                return $"nil/*{value.Kind()}: {value.ToString().Trim()}*/";
+        }
+    }
+
     void TranspileBlock(BlockSyntax block, SemanticModel model, string indent, TextWriter w)
     {
         foreach (var stmt in block.Statements)
@@ -352,33 +407,56 @@ class Transpiler
 
     void TranspileStatement(StatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
     {
-        if (stmt is LocalDeclarationStatementSyntax lds)
-        {
-            foreach (var v in lds.Declaration.Variables)
-            {
-                var vn = v.Identifier.ToString();
-                var init = TranspileExpression(v.Initializer?.Value, model);
-                if (init is not null)
-                    init = " = " + init;
-                w.WriteLine($"{indent}var {vn}{init};");
-            }
+        switch (stmt.Kind()) {
+            case SyntaxKind.ExpressionStatement:
+                TranspileExpressionStatement((ExpressionStatementSyntax)stmt, model, indent, w);
+                break;
+            case SyntaxKind.LocalDeclarationStatement:
+                TranspileLocalDeclarationStatement((LocalDeclarationStatementSyntax)stmt, model, indent, w);
+                break;
+            case SyntaxKind.ReturnStatement:
+                TranspileReturnStatement((ReturnStatementSyntax)stmt, model, indent, w);
+                break;
+            default:
+                Error($"Unsupported statement {stmt.Kind()}");
+                w.WriteLine($"{indent}/*{stmt.Kind()}: {stmt.ToString().Trim()}*/");
+                break;
         }
-        else if (stmt is ExpressionStatementSyntax es)
+    }
+
+    void TranspileReturnStatement(ReturnStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
+    {
+        var expr = stmt.Expression;
+        if (expr is null)
+            w.WriteLine($"{indent}return");
+        else
+            w.WriteLine($"{indent}return {TranspileExpression(expr, model)}");
+    }
+
+    private void TranspileExpressionStatement(ExpressionStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
+    {
+        var expr = stmt.Expression;
+        if (expr is AssignmentExpressionSyntax ae)
         {
-            var expr = es.Expression;
-            if (expr is AssignmentExpressionSyntax ae)
-            {
-                var lhs = TranspileExpression(ae.Left, model);
-                var rhs = TranspileExpression(ae.Right, model);
-                w.WriteLine($"{indent}{lhs} = {rhs};");
-            }
-            else
-            {
-                Error($"Unsupported expression statement: {expr}");
-            }
+            var lhs = TranspileExpression(ae.Left, model);
+            var rhs = TranspileExpression(ae.Right, model);
+            w.WriteLine($"{indent}{lhs} = {rhs}");
         }
-        else {
-            Error($"Unsupported statement: {stmt}");
+        else
+        {
+            Error($"Unsupported expression statement: {expr.Kind()}");
+        }
+    }
+
+    void TranspileLocalDeclarationStatement(LocalDeclarationStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
+    {
+        foreach (var v in stmt.Declaration.Variables)
+        {
+            var vn = v.Identifier.ToString();
+            var init = TranspileExpression(v.Initializer?.Value, model);
+            if (init is not null)
+                init = " = " + init;
+            w.WriteLine($"{indent}var {vn}{init}");
         }
     }
 
@@ -532,58 +610,6 @@ class Transpiler
             default:
                 Error($"Unsupported default value for type {type.Kind}");
                 return $"nil/*T:{type.Kind}*/";
-        }
-    }
-
-    string? TranspileExpression(ExpressionSyntax? value, SemanticModel model)
-    {
-        if (value is null) {
-            return null;
-        }
-        switch (value.Kind ()) {
-            case SyntaxKind.FalseLiteralExpression:
-                return "false";
-            case SyntaxKind.TrueLiteralExpression:
-                return "true";
-            case SyntaxKind.NumericLiteralExpression:
-                var nlit = (LiteralExpressionSyntax)value;
-                return nlit.Token.ValueText;
-            case SyntaxKind.StringLiteralExpression:
-                var slit = (LiteralExpressionSyntax)value;
-                {
-                    var stext = slit.GetText().ToString();
-                    if (stext.Length > 0 && stext[0] == '@') {
-                        stext = "\"\"\"\n" + slit.Token.ValueText + "\n\"\"\"";
-                    }
-                    return stext;
-                }
-            case SyntaxKind.SimpleMemberAccessExpression:
-                var sma = (MemberAccessExpressionSyntax)value;
-                return $"{TranspileExpression(sma.Expression, model)}.{sma.Name.ToString()}";
-            case SyntaxKind.IdentifierName:
-                var id = (IdentifierNameSyntax)value;
-                return id.ToString();
-            case SyntaxKind.InvocationExpression:
-                var inv = (InvocationExpressionSyntax)value;
-                var args = inv.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression, model)).ToArray();
-                return $"{TranspileExpression(inv.Expression, model)}({string.Join(", ", args)})";
-            // case SyntaxKind.ObjectCreationExpression:
-            //     var obj = (ObjectCreationExpressionSyntax)value;
-            //     var args2 = obj.ArgumentList.Arguments.Select(a => TranspileExpression(a.Expression)).ToArray();
-            //     return $"{obj.Type.ToString()}({string.Join(", ", args2)})";
-            case SyntaxKind.CastExpression:
-                var cast = (CastExpressionSyntax)value;
-                return $"{TranspileExpression(cast.Expression, model)} as {GetSwiftTypeName (cast.Type, model)}";
-            case SyntaxKind.NullLiteralExpression:
-                return "nil";
-            case SyntaxKind.ThisExpression:
-                return "self";
-            case SyntaxKind.ParenthesizedExpression:
-                var paren = (ParenthesizedExpressionSyntax)value;
-                return $"({TranspileExpression(paren.Expression, model)})";
-            default:
-                Error($"Unsupported expression kind: {value.Kind()}");
-                return $"nil/*E:{value.Kind()}*/";
         }
     }
 
