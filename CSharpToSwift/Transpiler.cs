@@ -106,6 +106,9 @@ class Transpiler
                     break;
                 case SyntaxKind.StructDeclaration:
                     var s = (StructDeclarationSyntax)node;
+                    using (var sw = NewSwiftWriter(swiftName)) {
+                        TranspileStruct(swiftName, s, symbol, model, sw);
+                    }
                     break;
                 case SyntaxKind.InterfaceDeclaration:
                     var i = (InterfaceDeclarationSyntax)node;
@@ -130,6 +133,22 @@ class Transpiler
             w.Write($"{head}{baseSwiftName}");
             head = ", ";
         }
+        foreach (var i in symbol.Interfaces) {
+            var baseSwiftName = GetSwiftTypeName(i);
+            w.Write($"{head}{baseSwiftName}");
+            head = ", ";
+        }
+        w.WriteLine($" {{");
+        foreach (var member in node.Members) {
+            TranspileClassOrStructMember(member, swiftName, node, symbol, model, w);
+        }
+        w.WriteLine($"}}");
+    }
+
+    void TranspileStruct(string swiftName, StructDeclarationSyntax node, INamedTypeSymbol symbol, SemanticModel model, TextWriter w)
+    {
+        w.Write($"struct {swiftName}");
+        var head = " : ";
         foreach (var i in symbol.Interfaces) {
             var baseSwiftName = GetSwiftTypeName(i);
             w.Write($"{head}{baseSwiftName}");
