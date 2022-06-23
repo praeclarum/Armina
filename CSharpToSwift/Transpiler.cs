@@ -302,12 +302,18 @@ class Transpiler
         var head = "";
         foreach (var p in parameterList.Parameters)
         {
-            var ptypeSymbol = model.GetSymbolInfo(p.Type).Symbol;
-            var isArray = IsArray(ptypeSymbol);
-            var ptypeName = GetSwiftTypeName(ptypeSymbol);
             var pname = p.Identifier.ToString();
-            var refMod = isArray ? "inout " : "";
-            w.Write($"{head}{pname}: {refMod}{ptypeName}");
+            if (p.Type is null) {
+                Error($"Parameter has no type: {pname}");
+                w.Write($"{head}{pname}: Int/*Error: not type*/");
+            }
+            else {
+                var ptypeSymbol = model.GetSymbolInfo(p.Type).Symbol;
+                var isArray = IsArray(ptypeSymbol);
+                var ptypeName = GetSwiftTypeName(ptypeSymbol);
+                var refMod = isArray ? "inout " : "";
+                w.Write($"{head}{pname}: {refMod}{ptypeName}");
+            }
             head = ", ";
         }
     }
@@ -413,9 +419,16 @@ class Transpiler
                     return ntext;
                 }
             case SyntaxKind.ObjectCreationExpression:
-                var oce = (ObjectCreationExpressionSyntax)value;
-                var oceType = model.GetSymbolInfo(oce.Type).Symbol;
-                return TranspileInvocation(GetSwiftTypeName (oceType), oce, oce.ArgumentList, model);
+                var oc = (ObjectCreationExpressionSyntax)value;
+                var ocType = model.GetSymbolInfo(oc.Type).Symbol;
+                var ocInit = oc.Initializer;
+                var ocName = GetSwiftTypeName (ocType);
+                var ocCode = oc.ArgumentList != null ? TranspileInvocation(ocName, oc, oc.ArgumentList, model) : $"{ocName}()";
+                if (ocInit is not null) {
+                    Error($"Object creation with initializer not supported");
+                    ocCode += $"/*{ocInit.ToString().Trim()}*/";
+                }
+                return ocCode;
             case SyntaxKind.ParenthesizedExpression:
                 var paren = (ParenthesizedExpressionSyntax)value;
                 return $"({TranspileExpression(paren.Expression, model)})";
@@ -642,6 +655,8 @@ class Transpiler
                     return "UInt8";
                 case nameof(System.Char):
                     return "Character";
+                case nameof(System.Int32):
+                    return "Int";
                 case nameof(System.IntPtr):
                     return "Int";
                 case "Object":
