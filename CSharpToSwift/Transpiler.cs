@@ -123,7 +123,19 @@ class Transpiler
 
     void TranspileClass(string swiftName, ClassDeclarationSyntax node, INamedTypeSymbol symbol, SemanticModel model, TextWriter w)
     {
-        w.WriteLine($"class {swiftName} {{");
+        w.Write($"class {swiftName}");
+        var head = " : ";
+        if (symbol.BaseType is {} baseType && !(baseType.Name == "Object" && baseType.ContainingNamespace.Name == "System")) {
+            var baseSwiftName = GetSwiftTypeName(baseType);
+            w.Write($"{head}{baseSwiftName}");
+            head = ", ";
+        }
+        foreach (var i in symbol.Interfaces) {
+            var baseSwiftName = GetSwiftTypeName(i);
+            w.Write($"{head}{baseSwiftName}");
+            head = ", ";
+        }
+        w.WriteLine($" {{");
         foreach (var member in node.Members) {
             TranspileClassOrStructMember(member, swiftName, node, symbol, model, w);
         }
