@@ -1,5 +1,6 @@
 namespace CSharpToSwift;
 
+using System;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -242,7 +243,7 @@ class Transpiler
         foreach (var v in field.Declaration.Variables)
         {
             var fieldSymbol = model.GetDeclaredSymbol(v);
-            var acc = GetAccessibility(fieldSymbol);
+            var acc = GetAccessLevelModifier(fieldSymbol);
             var vn = v.Identifier.ToString();
             var init = TranspileExpression(v.Initializer?.Value, model);
             if (!isReadOnly)
@@ -262,7 +263,7 @@ class Transpiler
         if (docs.Length > 0)
             w.WriteLine($"    /// {docs}");
         var methodSymbol = model.GetDeclaredSymbol(ctor);
-        var acc = GetAccessibility(methodSymbol);
+        var acc = GetAccessLevelModifier(methodSymbol);
         var isStatic = ctor.Modifiers.Any(x => x.IsKind(SyntaxKind.StaticKeyword));
         var slotType = isStatic ? "static " : "";
         w.Write($"    {acc}{slotType}init(");
@@ -280,7 +281,7 @@ class Transpiler
         var isVoid = IsTypeVoid(returnType);
         var returnTypeCode = isVoid ? "" : $" -> {GetSwiftTypeName(returnType)}";
         var methodSymbol = model.GetDeclaredSymbol(method);
-        var acc = GetAccessibility(methodSymbol);
+        var acc = GetAccessLevelModifier(methodSymbol);
         var isStatic = method.Modifiers.Any(x => x.IsKind(SyntaxKind.StaticKeyword));
         var isOverride = method.Modifiers.Any(x => x.IsKind(SyntaxKind.OverrideKeyword));
         var isSealed = method.Modifiers.Any(x => x.IsKind(SyntaxKind.SealedKeyword));
@@ -295,6 +296,9 @@ class Transpiler
         w.Write($"    {acc}{slotType}func {method.Identifier.ToString()}(");
         TranspileParams(method.ParameterList, model, w);
         w.WriteLine($"){returnTypeCode} {{");
+        if (method.Body is {} block) {
+            TranspileBlock(block, model, "        ", w);
+        }
         w.WriteLine($"    }}");
     }
 
@@ -317,27 +321,65 @@ class Transpiler
         if (docs.Length > 0)
             w.WriteLine($"    /// {docs}");
         var returnType = model.GetSymbolInfo(prop.Type).Symbol;
-        var isReadOnly = prop.Modifiers.Any(x => x.IsKind(SyntaxKind.ReadOnlyKeyword));
-        var isStatic = prop.Modifiers.Any(x => x.IsKind(SyntaxKind.StaticKeyword));
-        var isOverride = prop.Modifiers.Any(x => x.IsKind(SyntaxKind.OverrideKeyword));
-        var isSealed = prop.Modifiers.Any(x => x.IsKind(SyntaxKind.SealedKeyword));
-        var isAbstract = prop.Modifiers.Any(x => x.IsKind(SyntaxKind.AbstractKeyword));
-        var isVirtual = prop.Modifiers.Any(x => x.IsKind(SyntaxKind.VirtualKeyword));
-        var getSlotType = isStatic ? "static " : (isOverride ? "override " : (isAbstract ? "/*abstract*/ " : (isVirtual ? "" : "final ")));
-        var decl = isReadOnly ? (isStatic ? "static let" : "let") : (isStatic ? "static var" : "var");
+        string slotType = GetSlotTypeModifier(prop);
         var vn = prop.Identifier.ToString();
         var init = TranspileExpression(prop.Initializer?.Value, model);
         if (init is not null)
             init = " = " + init;
-        w.WriteLine($"    {getSlotType}{decl} {vn}: {GetSwiftTypeName(returnType)}{init} {{");
-        if (prop.AccessorList is {} alist) {
+        w.WriteLine($"    {slotType}var {vn}: {GetSwiftTypeName(returnType)}{init} {{");
+        if (prop.AccessorList is { } alist)
+        {
             foreach (var accessor in alist.Accessors)
             {
-                var acc = GetAccessibility(accessor, model);
-                w.WriteLine($"        {accessor.Keyword} {{}}");
+                var accLevel = GetAccessLevelModifier(accessor, model);
+                w.WriteLine($"        {accessor.Keyword} {{");
+                if (accessor.Body is {} block) {
+                    TranspileBlock(block, model, "            ", w);
+                }
+                w.WriteLine($"        }}");
             }
         }
         w.WriteLine($"    }}");
+    }
+
+    void TranspileBlock(BlockSyntax block, SemanticModel model, string indent, TextWriter w)
+    {
+        foreach (var stmt in block.Statements)
+        {
+            TranspileStatement(stmt, model, indent, w);
+        }
+    }
+
+    void TranspileStatement(StatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
+    {
+        if (stmt is LocalDeclarationStatementSyntax lds)
+        {
+            foreach (var v in lds.Declaration.Variables)
+            {
+                var vn = v.Identifier.ToString();
+                var init = TranspileExpression(v.Initializer?.Value, model);
+                if (init is not null)
+                    init = " = " + init;
+                w.WriteLine($"{indent}var {vn}{init};");
+            }
+        }
+        else if (stmt is ExpressionStatementSyntax es)
+        {
+            var expr = es.Expression;
+            if (expr is AssignmentExpressionSyntax ae)
+            {
+                var lhs = TranspileExpression(ae.Left, model);
+                var rhs = TranspileExpression(ae.Right, model);
+                w.WriteLine($"{indent}{lhs} = {rhs};");
+            }
+            else
+            {
+                Error($"Unsupported expression statement: {expr}");
+            }
+        }
+        else {
+            Error($"Unsupported statement: {stmt}");
+        }
     }
 
     static string GetDocs(CSharpSyntaxNode field)
@@ -359,14 +401,26 @@ class Transpiler
         return string.Join(" ", lines);
     }
 
-    static string GetAccessibility(CSharpSyntaxNode node, SemanticModel model)
+    static string GetSlotTypeModifier(MemberDeclarationSyntax member)
     {
-        var memberSymbol = model.GetSymbolInfo(node).Symbol;
-        return GetAccessibility(memberSymbol);
+        var isStatic = member.Modifiers.Any(x => x.IsKind(SyntaxKind.StaticKeyword));
+        var isOverride = member.Modifiers.Any(x => x.IsKind(SyntaxKind.OverrideKeyword));
+        var isSealed = member.Modifiers.Any(x => x.IsKind(SyntaxKind.SealedKeyword));
+        var isAbstract = member.Modifiers.Any(x => x.IsKind(SyntaxKind.AbstractKeyword));
+        var isVirtual = member.Modifiers.Any(x => x.IsKind(SyntaxKind.VirtualKeyword));
+        var slotType = isStatic ? "static " : (isOverride ? "override " : (isAbstract ? "open " : ""));
+        return slotType;
     }
 
-    static string GetAccessibility(ISymbol? memberSymbol)
+    static string GetAccessLevelModifier(CSharpSyntaxNode node, SemanticModel model)
     {
+        var memberSymbol = model.GetSymbolInfo(node).Symbol;
+        return GetAccessLevelModifier(memberSymbol);
+    }
+
+    static string GetAccessLevelModifier(ISymbol? memberSymbol)
+    {
+        // access-level-modifier: private | fileprivate | internal | public | open
         if (memberSymbol is null)
             return "";
         return memberSymbol.DeclaredAccessibility switch
