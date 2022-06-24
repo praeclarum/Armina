@@ -1163,6 +1163,12 @@ class Transpiler
                         else if (ntype.Name == "Nullable" && ntype.ContainingNamespace.Name == "System") {
                             return "nil";
                         }
+                        else if (ntype.Name == "Enum" && ntype.ContainingNamespace.Name == "System") {
+                            return "0";
+                        }
+                        else if (ntype.InstanceConstructors.FirstOrDefault(x => x.Parameters.Length == 0) is IMethodSymbol defaultCtor) {
+                            return $"{GetSwiftTypeName(type)}()";
+                        }
                         else {
                             Error($"Unsupported default value for named type: {type.Name}");
                             return $"0/*NT:{type.Name}*/";
