@@ -355,6 +355,8 @@ class Transpiler
             case SyntaxKind.AndAssignmentExpression:
                 var andAssign = (AssignmentExpressionSyntax)value;
                 return $"{TranspileExpression(andAssign.Left, model)} &= {TranspileExpression(andAssign.Right, model)}";
+            case SyntaxKind.ArrayCreationExpression:
+                return TranspileArrayCreation((ArrayCreationExpressionSyntax)value, model);
             case SyntaxKind.BaseExpression:
                 return "super";
             case SyntaxKind.BitwiseAndExpression:
@@ -509,6 +511,54 @@ class Transpiler
         }
     }
 
+    private string TranspileArrayCreation(ArrayCreationExpressionSyntax array, SemanticModel model)
+    {
+        var etypeSymbol = model.GetTypeInfo(array.Type.ElementType).Type;
+        if (array.Type.RankSpecifiers.Count == 1 && array.Type.RankSpecifiers[0].Sizes is {Count:1} sizes) {
+            var lengthExpr = sizes[0];
+            var length = TryEvaluateConstantIntExpression(lengthExpr, model, 0);
+            if (array.Initializer is {} init) {
+                var sb = new System.Text.StringBuilder();
+                sb.Append("[");
+                var head = "";
+                var num = 0;
+                foreach (var e in init.Expressions) {
+                    sb.Append(head);
+                    sb.Append(TranspileExpression(e, model));
+                    head = ", ";
+                    num++;
+                }
+                if (num < length) {
+                    var valueCode = GetDefaultValue(etypeSymbol);
+                    for (var i = num; i < length; i++) {
+                        sb.Append(head);
+                        sb.Append(valueCode);
+                        head = ", ";
+                    }
+                }
+                sb.Append("]");
+                return sb.ToString();
+            }
+            else  {
+                var valueCode = GetDefaultValue(etypeSymbol);
+                var lengthCode = TranspileExpression(lengthExpr, model);
+                return $"Array(repeating: {valueCode}, count: {lengthCode})";
+            }
+        }
+        else {
+            Error($"Unsupported array creation: {array.ToString().Trim()}");
+            return $"[]/*{array.ToString().Trim()}*/";
+        }
+    }
+
+    int TryEvaluateConstantIntExpression(ExpressionSyntax expr, SemanticModel model, int defaultInt)
+    {
+        if (expr is LiteralExpressionSyntax lit && lit.IsKind(SyntaxKind.NumericLiteralExpression)) {
+            return int.Parse(lit.Token.ValueText);
+        }
+        return defaultInt;
+    }
+
     string TranspileObjectCreationExpression(ObjectCreationExpressionSyntax oc, SemanticModel model)
     {
         if (model.GetSymbolInfo(oc.Type).Symbol is ITypeSymbol ocTypeSymbol)
@@ -544,7 +594,7 @@ class Transpiler
                     var kw = ocTypeSymbol.IsReferenceType ? "let" : "var";
                     var inits = ocInit.Expressions.Select(x => $"x.{TranspileExpression(x, model)}");
                     var initsCode = string.Join("; ", inits);
-                    ocCode = $"{{ {kw} x = {ocCode}; {initsCode} }}(/*OC*/)";
+                    ocCode = $"{{ {kw} x = {ocCode}; {initsCode} }}()";
                 }
                 return ocCode;
             }
