@@ -357,6 +357,9 @@ class Transpiler
                 return $"{TranspileExpression(andAssign.Left, model)} &= {TranspileExpression(andAssign.Right, model)}";
             case SyntaxKind.ArrayCreationExpression:
                 return TranspileArrayCreation((ArrayCreationExpressionSyntax)value, model, indent);
+            case SyntaxKind.ArrayInitializerExpression:
+                var aiElements = string.Join(", ", ((InitializerExpressionSyntax)value).Expressions.Select(x => TranspileExpression(x, model, indent)));
+                return $"[{aiElements}]";
             case SyntaxKind.AsExpression:
                 var ase = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(ase.Left, model)} as? {TranspileExpression(ase.Right, model)}";
@@ -504,6 +507,14 @@ class Transpiler
             case SyntaxKind.PreIncrementExpression:
                 var preInc = (PrefixUnaryExpressionSyntax)value;
                 return $"{TranspileExpression(preInc.Operand, model)} += 1";
+            case SyntaxKind.RangeExpression:
+                var range = (RangeExpressionSyntax)value;
+                var rangeStart = range.LeftOperand is not null ? TranspileExpression(range.LeftOperand, model) : null;
+                var rangeEnd = range.RightOperand is not null ? TranspileExpression(range.RightOperand, model) : null;
+                if (rangeEnd is not null)
+                    return $"{rangeStart}..<{rangeEnd}";
+                else
+                    return $"{rangeStart}...";
             case SyntaxKind.RightShiftExpression:
                 var rshift = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(rshift.Left, model)} >> {TranspileExpression(rshift.Right, model)}";
