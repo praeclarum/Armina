@@ -352,11 +352,26 @@ class Transpiler
             case SyntaxKind.AddAssignmentExpression:
                 var addAssign = (AssignmentExpressionSyntax)value;
                 return $"{TranspileExpression(addAssign.Left, model)} += {TranspileExpression(addAssign.Right, model)}";
+            case SyntaxKind.AndAssignmentExpression:
+                var andAssign = (AssignmentExpressionSyntax)value;
+                return $"{TranspileExpression(andAssign.Left, model)} &= {TranspileExpression(andAssign.Right, model)}";
             case SyntaxKind.BaseExpression:
                 return "super";
+            case SyntaxKind.BitwiseAndExpression:
+                var bitAnd = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(bitAnd.Left, model)} & {TranspileExpression(bitAnd.Right, model)}";
+            case SyntaxKind.BitwiseOrExpression:
+                var bitOr = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(bitOr.Left, model)} | {TranspileExpression(bitOr.Right, model)}";
+            case SyntaxKind.BitwiseNotExpression:
+                var bitNot = (PrefixUnaryExpressionSyntax)value;
+                return $"~{TranspileExpression(bitNot.Operand, model)}";
             case SyntaxKind.CastExpression:
                 var cast = (CastExpressionSyntax)value;
                 return $"{TranspileExpression(cast.Expression, model)} as {GetSwiftTypeName (cast.Type, model)}";
+            case SyntaxKind.CharacterLiteralExpression:
+                var charLit = (LiteralExpressionSyntax)value;
+                return $"\"{charLit.Token.ValueText}\"";
             case SyntaxKind.ConditionalExpression:
                 var cond = (ConditionalExpressionSyntax)value;
                 return $"{TranspileExpression(cond.Condition, model)} ? {TranspileExpression(cond.WhenTrue, model)} : {TranspileExpression(cond.WhenFalse, model)}";
@@ -387,6 +402,12 @@ class Transpiler
             case SyntaxKind.InvocationExpression:
                 var inv = (InvocationExpressionSyntax)value;
                 return TranspileInvocation(TranspileExpression(inv.Expression, model), inv, inv.ArgumentList, model);
+            case SyntaxKind.LeftShiftExpression:
+                var lshift = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(lshift.Left, model)} << {TranspileExpression(lshift.Right, model)}";
+            case SyntaxKind.LeftShiftAssignmentExpression:
+                var lshiftAssign = (AssignmentExpressionSyntax)value;
+                return $"{TranspileExpression(lshiftAssign.Left, model)} <<= {TranspileExpression(lshiftAssign.Right, model)}";
             case SyntaxKind.LessThanExpression:
                 var lt = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(lt.Left, model)} < {TranspileExpression(lt.Right, model)}";
@@ -437,6 +458,9 @@ class Transpiler
                     ocCode += $"/*{ocInit.ToString().Trim()}*/";
                 }
                 return ocCode;
+            case SyntaxKind.OrAssignmentExpression:
+                var orAssign = (AssignmentExpressionSyntax)value;
+                return $"{TranspileExpression(orAssign.Left, model)} |= {TranspileExpression(orAssign.Right, model)}";
             case SyntaxKind.ParenthesizedExpression:
                 var paren = (ParenthesizedExpressionSyntax)value;
                 return $"({TranspileExpression(paren.Expression, model)})";
@@ -454,6 +478,12 @@ class Transpiler
             case SyntaxKind.PreIncrementExpression:
                 var preInc = (PrefixUnaryExpressionSyntax)value;
                 return $"{TranspileExpression(preInc.Operand, model)} += 1";
+            case SyntaxKind.RightShiftExpression:
+                var rshift = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(rshift.Left, model)} >> {TranspileExpression(rshift.Right, model)}";
+            case SyntaxKind.RightShiftAssignmentExpression:
+                var rshiftAssign = (AssignmentExpressionSyntax)value;
+                return $"{TranspileExpression(rshiftAssign.Left, model)} >>= {TranspileExpression(rshiftAssign.Right, model)}";
             case SyntaxKind.SimpleAssignmentExpression:
                 var sae = (AssignmentExpressionSyntax)value;
                 return $"{TranspileExpression(sae.Left, model)} = {TranspileExpression(sae.Right, model)}";
@@ -549,6 +579,9 @@ class Transpiler
                 break;
             case SyntaxKind.BreakStatement:
                 w.WriteLine($"{indent}break");
+                break;
+            case SyntaxKind.ContinueStatement:
+                w.WriteLine($"{indent}continue");
                 break;
             case SyntaxKind.ExpressionStatement:
                 TranspileExpressionStatement((ExpressionStatementSyntax)stmt, model, indent, w);
