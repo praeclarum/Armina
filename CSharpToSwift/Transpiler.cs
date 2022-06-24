@@ -235,8 +235,8 @@ class Transpiler
             var fieldSymbol = model.GetDeclaredSymbol(v);
             var acc = GetAccessLevelModifier(fieldSymbol);
             var vn = v.Identifier.ToString();
-            var initCode = v.Initializer is not null ? TranspileExpression(v.Initializer.Value, model) : null;
-            if (!isReadOnly)
+            var initCode = v.Initializer is not null ? TranspileExpression(v.Initializer.Value, model, $"{indent}    ") : null;
+            if (initCode is null && !isReadOnly)
                 initCode = GetDefaultValue(type);
             var typeSuffix = initCode == "nil" ? "?" : "";
             if (initCode is not null)
@@ -343,7 +343,7 @@ class Transpiler
         w.WriteLine($"{indent}}}");
     }
 
-    string TranspileExpression(ExpressionSyntax value, SemanticModel model)
+    string TranspileExpression(ExpressionSyntax value, SemanticModel model, string indent = "")
     {
         switch (value.Kind ()) {
             case SyntaxKind.AddExpression:
@@ -403,7 +403,7 @@ class Transpiler
                 return id.Identifier.ToString();
             case SyntaxKind.InvocationExpression:
                 var inv = (InvocationExpressionSyntax)value;
-                return TranspileInvocation(TranspileExpression(inv.Expression, model), inv, inv.ArgumentList, model);
+                return TranspileInvocation(TranspileExpression(inv.Expression, model), inv, inv.ArgumentList, model, indent);
             case SyntaxKind.LeftShiftExpression:
                 var lshift = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(lshift.Left, model)} << {TranspileExpression(lshift.Right, model)}";
@@ -450,13 +450,16 @@ class Transpiler
                     return ntext;
                 }
             case SyntaxKind.ObjectCreationExpression:
-                return TranspileObjectCreationExpression((ObjectCreationExpressionSyntax)value, model);
+                return TranspileObjectCreationExpression((ObjectCreationExpressionSyntax)value, model, indent);
             case SyntaxKind.OrAssignmentExpression:
                 var orAssign = (AssignmentExpressionSyntax)value;
                 return $"{TranspileExpression(orAssign.Left, model)} |= {TranspileExpression(orAssign.Right, model)}";
             case SyntaxKind.ParenthesizedExpression:
                 var paren = (ParenthesizedExpressionSyntax)value;
                 return $"({TranspileExpression(paren.Expression, model)})";
+            case SyntaxKind.ParenthesizedLambdaExpression:
+                var parenLambda = (ParenthesizedLambdaExpressionSyntax)value;
+                return TranspileLambdaExpression(parenLambda.ParameterList.Parameters, parenLambda, model, indent);
             case SyntaxKind.PostDecrementExpression:
                 var postDec = (PostfixUnaryExpressionSyntax)value;
                 return $"{TranspileExpression(postDec.Operand, model)} -= 1";
@@ -480,13 +483,16 @@ class Transpiler
             case SyntaxKind.SimpleAssignmentExpression:
                 var sae = (AssignmentExpressionSyntax)value;
                 return $"{TranspileExpression(sae.Left, model)} = {TranspileExpression(sae.Right, model)}";
+            case SyntaxKind.SimpleLambdaExpression:
+                var simpleLambda = (SimpleLambdaExpressionSyntax)value;
+                return TranspileLambdaExpression(new[]{simpleLambda.Parameter}, simpleLambda, model, indent);
             case SyntaxKind.SimpleMemberAccessExpression:
                 var sma = (MemberAccessExpressionSyntax)value;
                 return $"{TranspileExpression(sma.Expression, model)}.{sma.Name.ToString()}";
             case SyntaxKind.StringLiteralExpression:
                 var slit = (LiteralExpressionSyntax)value;
                 {
-                    var stext = slit.GetText().ToString();
+                    var stext = slit.Token.Text;
                     if (stext.Length > 0 && stext[0] == '@') {
                         stext = "\"\"\"\n" + slit.Token.ValueText + "\n\"\"\"";
                     }
@@ -551,15 +557,29 @@ class Transpiler
         }
     }
 
-    int TryEvaluateConstantIntExpression(ExpressionSyntax expr, SemanticModel model, int defaultInt)
+    string TranspileLambdaExpression(IEnumerable<ParameterSyntax> parameters, LambdaExpressionSyntax lambda, SemanticModel model, string indent)
     {
-        if (expr is LiteralExpressionSyntax lit && lit.IsKind(SyntaxKind.NumericLiteralExpression)) {
-            return int.Parse(lit.Token.ValueText);
+        var parametersCode = string.Join(", ", parameters.Select(x => x.Identifier.ToString()));
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"{{ {parametersCode} in");
+        if (lambda.ExpressionBody is {} expr) {
+            var exprCode = TranspileExpression(expr, model);
+            sb.Append($" {exprCode} }}");
         }
-        return defaultInt;
+        else if (lambda.Block is {} block) {
+            using var sw = new StringWriter();
+            TranspileBlock(block, model, indent, sw);
+            var blockCode = sw.ToString();
+            sb.Append($"\n{blockCode}{indent}}}");
+        }
+        else {
+            Error($"Unsupported lambda expression: {lambda.ToString().Trim()}");
+            sb.Append($" nil/*{lambda.ToString().Trim()}*/ }}");
+        }
+        return sb.ToString();
     }
 
-    string TranspileObjectCreationExpression(ObjectCreationExpressionSyntax oc, SemanticModel model)
+    string TranspileObjectCreationExpression(ObjectCreationExpressionSyntax oc, SemanticModel model, string indent)
     {
         if (model.GetSymbolInfo(oc.Type).Symbol is ITypeSymbol ocTypeSymbol)
         {
@@ -588,7 +608,7 @@ class Transpiler
             }
             else {
                 var ocName = GetSwiftTypeName(ocTypeSymbol);
-                var ocCode = oc.ArgumentList != null ? TranspileInvocation(ocName, oc, oc.ArgumentList, model) : $"{ocName}()";
+                var ocCode = oc.ArgumentList != null ? TranspileInvocation(ocName, oc, oc.ArgumentList, model, indent) : $"{ocName}()";
                 if (ocInit is not null && ocInit.Expressions.Count > 0)
                 {
                     var kw = ocTypeSymbol.IsReferenceType ? "let" : "var";
@@ -606,7 +626,7 @@ class Transpiler
         }
     }
 
-    string TranspileInvocation(string exprCode, SyntaxNode invokeNode, ArgumentListSyntax argList, SemanticModel model)
+    string TranspileInvocation(string exprCode, SyntaxNode invokeNode, ArgumentListSyntax argList, SemanticModel model, string indent)
     {
         var method = model.GetSymbolInfo(invokeNode).Symbol as IMethodSymbol;
         if (method == null) {
@@ -622,6 +642,7 @@ class Transpiler
         var nparams = parameters.Length;
         var nargs = args.Count;
         var sb = new System.Text.StringBuilder();
+        var aindent = $"{indent}    ";
         sb.Append(exprCode);
         sb.Append("(");
         for (var i = 0; i < nparams; i++) {
@@ -632,7 +653,7 @@ class Transpiler
             sb.Append(": ");
             if (i < nargs) {
                 var arg = args[i];
-                sb.Append(TranspileExpression(arg.Expression, model));
+                sb.Append(TranspileExpression(arg.Expression, model, aindent));
             } else {
                 Error("Missing argument value");
                 sb.Append("nil/*missing*/");
@@ -643,7 +664,7 @@ class Transpiler
             for (var i = nparams; i < nargs; i++) {
                 var arg = args[i];
                 sb.Append(", ");
-                sb.Append(TranspileExpression(arg.Expression, model));
+                sb.Append(TranspileExpression(arg.Expression, model, aindent));
                 sb.Append("/*extra*/");
             }
         }
@@ -874,6 +895,14 @@ class Transpiler
     static bool IsTypeArray(ISymbol? typeSymbol)
     {
         return typeSymbol is IArrayTypeSymbol;
+    }
+
+    int TryEvaluateConstantIntExpression(ExpressionSyntax expr, SemanticModel model, int defaultInt)
+    {
+        if (expr is LiteralExpressionSyntax lit && lit.IsKind(SyntaxKind.NumericLiteralExpression)) {
+            return int.Parse(lit.Token.ValueText);
+        }
+        return defaultInt;
     }
 
     string GetDefaultValue(ISymbol? type)
