@@ -711,6 +711,15 @@ class Transpiler
             case SyntaxKind.ReturnStatement:
                 TranspileReturnStatement((ReturnStatementSyntax)stmt, model, indent, w);
                 break;
+            case SyntaxKind.ThrowStatement:
+                var thrw = (ThrowStatementSyntax)stmt;
+                if (thrw.Expression is {} expr) {
+                    w.WriteLine($"{indent}throw {TranspileExpression(thrw.Expression, model)}");
+                }
+                else {
+                    w.WriteLine($"{indent}throw");
+                }
+                break;
             case SyntaxKind.TryStatement:
                 TranspileTryStatement((TryStatementSyntax)stmt, model, indent, w);
                 break;
