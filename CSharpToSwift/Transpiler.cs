@@ -448,16 +448,7 @@ class Transpiler
                     return ntext;
                 }
             case SyntaxKind.ObjectCreationExpression:
-                var oc = (ObjectCreationExpressionSyntax)value;
-                var ocType = model.GetSymbolInfo(oc.Type).Symbol;
-                var ocInit = oc.Initializer;
-                var ocName = GetSwiftTypeName (ocType);
-                var ocCode = oc.ArgumentList != null ? TranspileInvocation(ocName, oc, oc.ArgumentList, model) : $"{ocName}()";
-                if (ocInit is not null) {
-                    Error($"Object creation with initializer not supported");
-                    ocCode += $"/*{ocInit.ToString().Trim()}*/";
-                }
-                return ocCode;
+                return TranspileObjectCreationExpression((ObjectCreationExpressionSyntax)value, model);
             case SyntaxKind.OrAssignmentExpression:
                 var orAssign = (AssignmentExpressionSyntax)value;
                 return $"{TranspileExpression(orAssign.Left, model)} |= {TranspileExpression(orAssign.Right, model)}";
@@ -515,6 +506,53 @@ class Transpiler
             default:
                 Error($"Unsupported expression kind: {value.Kind()}");
                 return $"nil/*{value.Kind()}: {value.ToString().Trim()}*/";
+        }
+    }
+
+    string TranspileObjectCreationExpression(ObjectCreationExpressionSyntax oc, SemanticModel model)
+    {
+        if (model.GetSymbolInfo(oc.Type).Symbol is ITypeSymbol ocTypeSymbol)
+        {
+            var ocInit = oc.Initializer;
+            if (ocTypeSymbol.Name == "Dictionary" && ocTypeSymbol.ContainingNamespace.ToString() == "System.Collections.Generic") {
+                var sb = new System.Text.StringBuilder();
+                sb.Append("[");
+                if (ocInit is not null && ocInit.Expressions.Count > 0)
+                {
+                    var head = "";
+                    foreach (var kv in ocInit.Expressions)
+                    {
+                        sb.Append(head);
+                        if (kv is InitializerExpressionSyntax ie && ie.Expressions.Count == 2) {
+                            sb.Append($"{TranspileExpression(ie.Expressions[0], model)}: {TranspileExpression(ie.Expressions[1], model)}");
+                        }
+                        else {
+                            Error($"Unsupported dictionary initializer kind: {kv.Kind()}");
+                            sb.Append($"nil/*{kv.ToString().Trim()}*/");
+                        }
+                        head = ", ";
+                    }
+                }
+                sb.Append("]");
+                return sb.ToString();
+            }
+            else {
+                var ocName = GetSwiftTypeName(ocTypeSymbol);
+                var ocCode = oc.ArgumentList != null ? TranspileInvocation(ocName, oc, oc.ArgumentList, model) : $"{ocName}()";
+                if (ocInit is not null && ocInit.Expressions.Count > 0)
+                {
+                    var kw = ocTypeSymbol.IsReferenceType ? "let" : "var";
+                    var inits = ocInit.Expressions.Select(x => $"x.{TranspileExpression(x, model)}");
+                    var initsCode = string.Join("; ", inits);
+                    ocCode = $"{{ {kw} x = {ocCode}; {initsCode} }}(/*OC*/)";
+                }
+                return ocCode;
+            }
+        }
+        else
+        {
+            Error($"Unable to determine type of object creation expression: {oc.Type.ToString()}");
+            return $"nil/*no type symbol: {oc.Type.ToString().Trim()}*/";
         }
     }
 
