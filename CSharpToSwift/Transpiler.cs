@@ -420,6 +420,8 @@ class Transpiler
             case SyntaxKind.IsExpression:
                 var ise = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(ise.Left, model)} is {TranspileExpression(ise.Right, model)}";
+            case SyntaxKind.IsPatternExpression:
+                return TranspileIsPattern((IsPatternExpressionSyntax)value, model, indent);
             case SyntaxKind.LeftShiftExpression:
                 var lshift = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(lshift.Left, model)} << {TranspileExpression(lshift.Right, model)}";
@@ -535,6 +537,38 @@ class Transpiler
             default:
                 Error($"Unsupported expression kind: {value.Kind()}");
                 return $"nil/*{value.Kind()}: {value.ToString().Trim()}*/";
+        }
+    }
+
+    string TranspileIsPattern(IsPatternExpressionSyntax value, SemanticModel model, string indent)
+    {
+        var exprCode = TranspileExpression(value.Expression, model, indent);
+        switch (value.Pattern.Kind ()) {
+            case SyntaxKind.DeclarationPattern:
+                var dp = (DeclarationPatternSyntax)value.Pattern;
+                var dpTypeName = GetSwiftTypeName(dp.Type, model);
+                if (dp.Designation is SingleVariableDesignationSyntax svds) {
+                    return $"let {svds.Identifier} = {exprCode} as? {dpTypeName}";
+                }
+                else {
+                    Error($"Unsupported declaration pattern: {dp.Designation.ToString()}");
+                    return $"{exprCode}/* is {dp.Designation.ToString()}*/";
+                }
+            case SyntaxKind.ConstantPattern:
+                var cp = (ConstantPatternSyntax)value.Pattern;
+                switch (cp.Expression.Kind()) {
+                    case SyntaxKind.TrueLiteralExpression:
+                        return $"{exprCode}";
+                    case SyntaxKind.FalseLiteralExpression:
+                        return $"!{exprCode}";
+                    case SyntaxKind.NullLiteralExpression:
+                        return $"{exprCode} == nil";
+                    default:
+                        return $"{exprCode} == {TranspileExpression(cp.Expression, model)}";
+                }
+            default:
+                Error($"Unsupported pattern kind: {value.Pattern.Kind()}");
+                return $"{exprCode}/*{value.Pattern.Kind()}: {value.Pattern.ToString().Trim()}*/";
         }
     }
 
