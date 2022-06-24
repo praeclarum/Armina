@@ -377,16 +377,19 @@ class Transpiler
                     }
                     else if (accessor.ExpressionBody is {} ebody) {
                         var eCode = TranspileExpression(ebody.Expression, model, $"{indent}        ");
-                        if (ebody.Expression is AssignmentExpressionSyntax expr) {
-                            w.WriteLine($"{indent}        {eCode}");
-                        }
-                        else {
-                            w.WriteLine($"{indent}        return {eCode}");
-                        }
+                        w.WriteLine($"{indent}        {eCode}");
                     }
                     w.WriteLine($"{indent}    }}");
                 }
             }
+        }
+        else if (prop.ExpressionBody is {} ebody) {
+            var eCode = TranspileExpression(ebody.Expression, model, $"{indent}    ");
+            w.WriteLine($"{indent}    get {{ {eCode} }}");
+        }
+        else {
+            Error($"Property has no accessors: {vn}");
+            w.WriteLine($"{indent}    // No accessors");
         }
         w.WriteLine($"{indent}}}");
     }
