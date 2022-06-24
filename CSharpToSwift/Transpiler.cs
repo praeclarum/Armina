@@ -367,13 +367,22 @@ class Transpiler
             {
                 var accLevel = GetAccessLevelModifier(accessor, model);
                 w.Write($"{indent}    {accessor.Keyword}");
-                if (accessor.Body is null && !requireMethodBody) {
+                if (accessor.Body is null && accessor.ExpressionBody is null && !requireMethodBody) {
                     w.WriteLine();
                 }
                 else {
                     w.WriteLine($" {{");
                     if (accessor.Body is {} block) {
                         TranspileBlock(block, model, $"{indent}        ", w);
+                    }
+                    else if (accessor.ExpressionBody is {} ebody) {
+                        var eCode = TranspileExpression(ebody.Expression, model, $"{indent}        ");
+                        if (ebody.Expression is AssignmentExpressionSyntax expr) {
+                            w.WriteLine($"{indent}        {eCode}");
+                        }
+                        else {
+                            w.WriteLine($"{indent}        return {eCode}");
+                        }
                     }
                     w.WriteLine($"{indent}    }}");
                 }
