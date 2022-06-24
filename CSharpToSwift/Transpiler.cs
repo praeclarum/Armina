@@ -379,7 +379,7 @@ class Transpiler
                 return $"{TranspileExpression(cast.Expression, model)} as {GetSwiftTypeName (cast.Type, model)}";
             case SyntaxKind.CharacterLiteralExpression:
                 var charLit = (LiteralExpressionSyntax)value;
-                return $"\"{charLit.Token.ValueText}\"";
+                return charLit.Token.Text.Replace('\'', '\"');
             case SyntaxKind.CoalesceExpression:
                 var coalesce = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(coalesce.Left, model)} ?? {TranspileExpression(coalesce.Right, model)}";
