@@ -356,7 +356,7 @@ class Transpiler
                 var andAssign = (AssignmentExpressionSyntax)value;
                 return $"{TranspileExpression(andAssign.Left, model)} &= {TranspileExpression(andAssign.Right, model)}";
             case SyntaxKind.ArrayCreationExpression:
-                return TranspileArrayCreation((ArrayCreationExpressionSyntax)value, model);
+                return TranspileArrayCreation((ArrayCreationExpressionSyntax)value, model, indent);
             case SyntaxKind.AsExpression:
                 var ase = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(ase.Left, model)} as? {TranspileExpression(ase.Right, model)}";
@@ -403,6 +403,9 @@ class Transpiler
             case SyntaxKind.EqualsExpression:
                 var eq = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(eq.Left, model)} == {TranspileExpression(eq.Right, model)}";
+            case SyntaxKind.ExclusiveOrExpression:
+                var xor = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(xor.Left, model)} ^ {TranspileExpression(xor.Right, model)}";
             case SyntaxKind.FalseLiteralExpression:
                 return "false";
             case SyntaxKind.GreaterThanExpression:
@@ -414,6 +417,10 @@ class Transpiler
             case SyntaxKind.IdentifierName:
                 var id = (IdentifierNameSyntax)value;
                 return id.Identifier.ToString();
+            case SyntaxKind.ImplicitArrayCreationExpression:
+                var iac = (ImplicitArrayCreationExpressionSyntax)value;
+                var iacArgs = string.Join(", ", iac.Initializer.Expressions.Select(e => TranspileExpression(e, model, indent)));
+                return $"[{iacArgs}]";
             case SyntaxKind.InvocationExpression:
                 var inv = (InvocationExpressionSyntax)value;
                 return TranspileInvocation(TranspileExpression(inv.Expression, model), inv, inv.ArgumentList, model, indent);
@@ -572,7 +579,7 @@ class Transpiler
         }
     }
 
-    private string TranspileArrayCreation(ArrayCreationExpressionSyntax array, SemanticModel model)
+    private string TranspileArrayCreation(ArrayCreationExpressionSyntax array, SemanticModel model, string indent)
     {
         var etypeSymbol = model.GetTypeInfo(array.Type.ElementType).Type;
         if (array.Type.RankSpecifiers.Count == 1 && array.Type.RankSpecifiers[0].Sizes is {Count:1} sizes) {
@@ -585,7 +592,7 @@ class Transpiler
                 var num = 0;
                 foreach (var e in init.Expressions) {
                     sb.Append(head);
-                    sb.Append(TranspileExpression(e, model));
+                    sb.Append(TranspileExpression(e, model, indent));
                     head = ", ";
                     num++;
                 }
