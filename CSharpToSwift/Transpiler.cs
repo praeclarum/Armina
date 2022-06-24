@@ -677,6 +677,9 @@ class Transpiler
             case SyntaxKind.ForStatement:
                 TranspileForStatement((ForStatementSyntax)stmt, model, indent, w);
                 break;
+            case SyntaxKind.ForEachStatement:
+                TranspileForEachStatement((ForEachStatementSyntax)stmt, model, indent, w);
+                break;
             case SyntaxKind.IfStatement:
                 TranspileIfStatement((IfStatementSyntax)stmt, model, indent, w);
                 break;
@@ -715,6 +718,16 @@ class Transpiler
             var expr = TranspileExpression(incr, model);
             w.WriteLine($"{indent}    {expr}");
         }
+        w.WriteLine($"{indent}}}");
+    }
+
+    void TranspileForEachStatement(ForEachStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
+    {
+        var expr = stmt.Expression;
+        var ident = stmt.Identifier;
+        var exprCode = TranspileExpression(expr, model);
+        w.WriteLine($"{indent}for {ident.ValueText} in {exprCode} {{");
+        TranspileStatement(stmt.Statement, model, indent + "    ", w);
         w.WriteLine($"{indent}}}");
     }
 
