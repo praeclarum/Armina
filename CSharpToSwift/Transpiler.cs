@@ -711,6 +711,9 @@ class Transpiler
             case SyntaxKind.ReturnStatement:
                 TranspileReturnStatement((ReturnStatementSyntax)stmt, model, indent, w);
                 break;
+            case SyntaxKind.TryStatement:
+                TranspileTryStatement((TryStatementSyntax)stmt, model, indent, w);
+                break;
             case SyntaxKind.WhileStatement:
                 TranspileWhileStatement((WhileStatementSyntax)stmt, model, indent, w);
                 break;
@@ -772,6 +775,44 @@ class Transpiler
             w.WriteLine($"{indent}return");
         else
             w.WriteLine($"{indent}return {TranspileExpression(expr, model)}");
+    }
+
+    void TranspileTryStatement(TryStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
+    {
+        var block = stmt.Block;
+        var catches = stmt.Catches;
+        if (catches.Count > 0) {
+            w.WriteLine($"{indent}do {{");
+            if (stmt.Finally is { } fin) {
+                w.WriteLine($"{indent}    defer {{");
+                TranspileBlock(fin.Block, model, indent + "        ", w);
+                w.WriteLine($"{indent}    }}");
+            }
+            TranspileBlock(block, model, indent + "    ", w);
+            foreach (var catchClause in catches) {
+                w.Write($"{indent}}} catch ");
+                if (catchClause.Declaration is { } decl) {
+                    w.Write (GetSwiftTypeName(decl.Type, model));
+                }                
+                if (catchClause.Filter is { } filter) {
+                    var cond = TranspileExpression(filter.FilterExpression, model);
+                    w.WriteLine($"where {cond}");
+                }
+                w.WriteLine($" {{");
+                TranspileBlock(catchClause.Block, model, indent + "    ", w);
+                w.WriteLine($"{indent}}}");
+            }
+        }
+        else {
+            w.WriteLine($"{indent}{{");
+            if (stmt.Finally is { } fin) {
+                w.WriteLine($"{indent}    defer {{");
+                TranspileBlock(fin.Block, model, indent + "        ", w);
+                w.WriteLine($"{indent}    }}");
+            }
+            TranspileBlock(block, model, indent + "    ", w);
+            w.WriteLine($"{indent}}}");
+        }
     }
 
     void TranspileVariableDeclaration(VariableDeclarationSyntax decl, SemanticModel model, string indent, TextWriter w)
