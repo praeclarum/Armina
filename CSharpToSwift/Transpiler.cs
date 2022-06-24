@@ -392,6 +392,9 @@ class Transpiler
             case SyntaxKind.DivideExpression:
                 var div = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(div.Left, model)} / {TranspileExpression(div.Right, model)}";
+            case SyntaxKind.DefaultExpression:
+                var def = (DefaultExpressionSyntax)value;
+                return GetDefaultValue(model.GetTypeInfo(def.Type).Type);
             case SyntaxKind.DivideAssignmentExpression:
                 var divAssign = (AssignmentExpressionSyntax)value;
                 return $"{TranspileExpression(divAssign.Left, model)} /= {TranspileExpression(divAssign.Right, model)}";
