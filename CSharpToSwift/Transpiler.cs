@@ -711,6 +711,9 @@ class Transpiler
             case SyntaxKind.ReturnStatement:
                 TranspileReturnStatement((ReturnStatementSyntax)stmt, model, indent, w);
                 break;
+            case SyntaxKind.SwitchStatement:
+                TranspileSwitchStatement((SwitchStatementSyntax)stmt, model, indent, w);
+                break;
             case SyntaxKind.ThrowStatement:
                 var thrw = (ThrowStatementSyntax)stmt;
                 if (thrw.Expression is {} expr) {
@@ -772,7 +775,7 @@ class Transpiler
         if (stmt.Else is { } elseClause)
         {
             w.WriteLine($"{indent}}} else {{");
-            TranspileStatement(elseClause.Statement, model, indent + "    ", w);            
+            TranspileStatement(elseClause.Statement, model, indent + "    ", w);
         }
         w.WriteLine($"{indent}}}");
     }
@@ -784,6 +787,40 @@ class Transpiler
             w.WriteLine($"{indent}return");
         else
             w.WriteLine($"{indent}return {TranspileExpression(expr, model)}");
+    }
+
+    void TranspileSwitchStatement(SwitchStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
+    {
+        var expr = stmt.Expression;
+        w.WriteLine($"{indent}switch {TranspileExpression(expr, model)} {{");
+        foreach (var s in stmt.Sections)
+        {
+            var caseLabels = s.Labels.Where(x => !x.IsKind(SyntaxKind.DefaultSwitchLabel)).ToArray();
+            var defLabel = s.Labels.FirstOrDefault(x => x.IsKind(SyntaxKind.DefaultSwitchLabel));
+            if (caseLabels.Length > 0) {
+                var labels = string.Join(", ", s.Labels.Select(x => {
+                    if (x.IsKind(SyntaxKind.DefaultSwitchLabel)) {
+                        return "default";
+                    } else if (x.IsKind(SyntaxKind.CaseSwitchLabel)) {
+                        return TranspileExpression(((CaseSwitchLabelSyntax)x).Value, model, indent);
+                    } else {
+                        Error($"Unsupported switch label: {x}");
+                        return x.ToString();
+                    }
+                }));
+                w.WriteLine($"{indent}case {labels}:");
+                foreach (var cstmt in s.Statements) {
+                    TranspileStatement(cstmt, model, indent + "    ", w);
+                }
+            }
+            if (defLabel is not null) {
+                w.WriteLine($"{indent}default:");
+                foreach (var cstmt in s.Statements) {
+                    TranspileStatement(cstmt, model, indent + "    ", w);
+                }
+            }
+        }
+        w.WriteLine($"{indent}}}");
     }
 
     void TranspileTryStatement(TryStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
