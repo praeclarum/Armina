@@ -161,7 +161,7 @@ class Transpiler
         }
         w.WriteLine($" {{");
         foreach (var member in node.Members) {
-            TranspileClassOrStructMember(member, swiftName, node, symbol, model, indent + "    ", w, requireMethodBody: false);
+            TranspileClassOrStructMember(member, swiftName, node, symbol, model, indent + "    ", w, requireMethodBody: true);
         }
         w.WriteLine($"{indent}}}");
     }
