@@ -238,7 +238,7 @@ class Transpiler
             var initCode = v.Initializer is not null ? TranspileExpression(v.Initializer.Value, model, $"{indent}    ") : null;
             if (initCode is null && !isReadOnly)
                 initCode = GetDefaultValue(type);
-            var typeSuffix = initCode == "nil" ? "?" : "";
+            var typeSuffix = "";//TODO: Enable null checking. initCode == "nil" ? "?" : "";
             if (initCode is not null)
                 initCode = " = " + initCode;
             if (docs.Length > 0)
@@ -357,6 +357,9 @@ class Transpiler
                 return $"{TranspileExpression(andAssign.Left, model)} &= {TranspileExpression(andAssign.Right, model)}";
             case SyntaxKind.ArrayCreationExpression:
                 return TranspileArrayCreation((ArrayCreationExpressionSyntax)value, model);
+            case SyntaxKind.AsExpression:
+                var ase = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(ase.Left, model)} as? {TranspileExpression(ase.Right, model)}";
             case SyntaxKind.BaseExpression:
                 return "super";
             case SyntaxKind.BitwiseAndExpression:
@@ -374,6 +377,12 @@ class Transpiler
             case SyntaxKind.CharacterLiteralExpression:
                 var charLit = (LiteralExpressionSyntax)value;
                 return $"\"{charLit.Token.ValueText}\"";
+            case SyntaxKind.CoalesceExpression:
+                var coalesce = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(coalesce.Left, model)} ?? {TranspileExpression(coalesce.Right, model)}";
+            case SyntaxKind.ConditionalAccessExpression:
+                var ca = (ConditionalAccessExpressionSyntax)value;
+                return $"{TranspileExpression(ca.Expression, model)}?{TranspileExpression(ca.WhenNotNull, model)}";
             case SyntaxKind.ConditionalExpression:
                 var cond = (ConditionalExpressionSyntax)value;
                 return $"{TranspileExpression(cond.Condition, model)} ? {TranspileExpression(cond.WhenTrue, model)} : {TranspileExpression(cond.WhenFalse, model)}";
@@ -385,8 +394,12 @@ class Transpiler
                 return $"{TranspileExpression(divAssign.Left, model)} /= {TranspileExpression(divAssign.Right, model)}";
             case SyntaxKind.ElementAccessExpression:
                 var ea = (ElementAccessExpressionSyntax)value;
-                var eaArgs = string.Join(", ", ea.ArgumentList.Arguments.Select(x => TranspileExpression(x.Expression, model)));
+                var eaArgs = TranspileElementArguments(ea.ArgumentList, model, indent);
                 return $"{TranspileExpression(ea.Expression, model)}[{eaArgs}]";
+            case SyntaxKind.ElementBindingExpression:
+                var eb = (ElementBindingExpressionSyntax)value;
+                var ebArgs = TranspileElementArguments(eb.ArgumentList, model, indent);
+                return $"[{ebArgs}]";
             case SyntaxKind.EqualsExpression:
                 var eq = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(eq.Left, model)} == {TranspileExpression(eq.Right, model)}";
@@ -404,6 +417,9 @@ class Transpiler
             case SyntaxKind.InvocationExpression:
                 var inv = (InvocationExpressionSyntax)value;
                 return TranspileInvocation(TranspileExpression(inv.Expression, model), inv, inv.ArgumentList, model, indent);
+            case SyntaxKind.IsExpression:
+                var ise = (BinaryExpressionSyntax)value;
+                return $"{TranspileExpression(ise.Left, model)} is {TranspileExpression(ise.Right, model)}";
             case SyntaxKind.LeftShiftExpression:
                 var lshift = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(lshift.Left, model)} << {TranspileExpression(lshift.Right, model)}";
@@ -425,6 +441,9 @@ class Transpiler
             case SyntaxKind.LogicalOrExpression:
                 var or = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(or.Left, model)} || {TranspileExpression(or.Right, model)}";
+            case SyntaxKind.MemberBindingExpression:
+                var mbe = (MemberBindingExpressionSyntax)value;
+                return $".{TranspileExpression(mbe.Name, model)}";
             case SyntaxKind.ModuloExpression:
                 var mod = (BinaryExpressionSyntax)value;
                 return $"{TranspileExpression(mod.Left, model)} % {TranspileExpression(mod.Right, model)}";
@@ -447,6 +466,8 @@ class Transpiler
                         ntext = "0" + ntext;
                     if (ntext[^1] == 'f')
                         ntext = ntext.Substring(0, ntext.Length - 1);
+                    if (ntext.EndsWith("ul", StringComparison.InvariantCultureIgnoreCase))
+                        ntext = $"UInt64({ntext.Substring(0, ntext.Length - 2)})";
                     return ntext;
                 }
             case SyntaxKind.ObjectCreationExpression:
@@ -555,6 +576,11 @@ class Transpiler
             Error($"Unsupported array creation: {array.ToString().Trim()}");
             return $"[]/*{array.ToString().Trim()}*/";
         }
+    }
+
+    string TranspileElementArguments(BracketedArgumentListSyntax argList, SemanticModel model, string indent)
+    {
+        return string.Join(", ", argList.Arguments.Select(x => TranspileExpression(x.Expression, model, indent)));
     }
 
     string TranspileLambdaExpression(IEnumerable<ParameterSyntax> parameters, LambdaExpressionSyntax lambda, SemanticModel model, string indent)
@@ -863,14 +889,13 @@ class Transpiler
 
     void TranspileVariableDeclaration(VariableDeclarationSyntax decl, SemanticModel model, string indent, TextWriter w)
     {
-        var vtypeName = GetSwiftTypeName(decl.Type, model);
+        var declType = model.GetTypeInfo(decl.Type).Type;
+        var declTypeName = GetSwiftTypeName(declType);
         foreach (var v in decl.Variables)
         {
             var vn = v.Identifier.ToString();
-            var initCode = v.Initializer is not null ? TranspileExpression(v.Initializer.Value, model) : null;
-            if (initCode is not null)
-                initCode = " = " + initCode;
-            w.WriteLine($"{indent}var {vn}: {vtypeName}{initCode}");
+            var initCode = v.Initializer is not null ? TranspileExpression(v.Initializer.Value, model) : GetDefaultValue(declType);
+            w.WriteLine($"{indent}var {vn}: {declTypeName} = {initCode}");
         }
     }
 
