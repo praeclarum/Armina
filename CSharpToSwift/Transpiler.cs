@@ -222,7 +222,7 @@ class Transpiler
                 TranspileMethod((MethodDeclarationSyntax)member, typeSymbol, model, indent, w, requireMethodBody: requireMethodBody);
                 break;
             case SyntaxKind.PropertyDeclaration:
-                TranspileProperty((PropertyDeclarationSyntax)member, typeSymbol, model, indent, w);
+                TranspileProperty((PropertyDeclarationSyntax)member, typeSymbol, model, indent, w, requireMethodBody: requireMethodBody);
                 break;
             case SyntaxKind.StructDeclaration:
                 var structDecl = (StructDeclarationSyntax)member;
@@ -350,7 +350,7 @@ class Transpiler
         }
     }
 
-    void TranspileProperty(PropertyDeclarationSyntax prop, INamedTypeSymbol containerTypeSymbol, SemanticModel model, string indent, TextWriter w)
+    void TranspileProperty(PropertyDeclarationSyntax prop, INamedTypeSymbol containerTypeSymbol, SemanticModel model, string indent, TextWriter w, bool requireMethodBody)
     {
         var docs = GetDocs(prop);
         if (docs.Length > 0)
@@ -367,11 +367,17 @@ class Transpiler
             foreach (var accessor in alist.Accessors)
             {
                 var accLevel = GetAccessLevelModifier(accessor, model);
-                w.WriteLine($"{indent}    {accessor.Keyword} {{");
-                if (accessor.Body is {} block) {
-                    TranspileBlock(block, model, $"{indent}        ", w);
+                w.Write($"{indent}    {accessor.Keyword}");
+                if (accessor.Body is null && !requireMethodBody) {
+                    w.WriteLine();
                 }
-                w.WriteLine($"{indent}    }}");
+                else {
+                    w.WriteLine($" {{");
+                    if (accessor.Body is {} block) {
+                        TranspileBlock(block, model, $"{indent}        ", w);
+                    }
+                    w.WriteLine($"{indent}    }}");
+                }
             }
         }
         w.WriteLine($"{indent}}}");
