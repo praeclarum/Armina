@@ -113,7 +113,7 @@ class Transpiler
                     }
                     break;
                 default:
-                    Error($"Unsupported type kind: {node.Kind()}");
+                    Error($"Unsupported type: {node.Kind()}");
                     break;
             }
         }
@@ -214,7 +214,7 @@ class Transpiler
                 }
                 break;
             default:
-                Error($"Unsupported member kind: {member.Kind()}");
+                Error($"Unsupported member: {member.Kind()}");
                 w.WriteLine($"    /*{member.Kind()}: {member.ToString().Trim()}*/");
                 break;
         }
@@ -282,7 +282,7 @@ class Transpiler
         var isVirtual = method.Modifiers.Any(x => x.IsKind(SyntaxKind.VirtualKeyword));
         if (isAbstract)
         {
-            Error("Abstract methods are not supported");
+            // Warning("Abstract methods are not supported");
         }
         // acc = acc + $"/*{method.Modifiers}*/";
         var slotType = isStatic ? "static " : (isOverride ? "override " : (isAbstract ? "/*abstract*/ " : (isVirtual ? "" : "final ")));
@@ -542,7 +542,7 @@ class Transpiler
                 var ume = (PrefixUnaryExpressionSyntax)value;
                 return $"-{TranspileExpression(ume.Operand, model)}";
             default:
-                Error($"Unsupported expression kind: {value.Kind()}");
+                Error($"Unsupported expression: {value.Kind()}");
                 return $"nil/*{value.Kind()}: {value.ToString().Trim()}*/";
         }
     }
@@ -574,7 +574,7 @@ class Transpiler
                         return $"{exprCode} == {TranspileExpression(cp.Expression, model)}";
                 }
             default:
-                Error($"Unsupported pattern kind: {value.Pattern.Kind()}");
+                Error($"Unsupported pattern: {value.Pattern.Kind()}");
                 return $"{exprCode}/*{value.Pattern.Kind()}: {value.Pattern.ToString().Trim()}*/";
         }
     }
@@ -664,7 +664,7 @@ class Transpiler
                             sb.Append($"{TranspileExpression(ie.Expressions[0], model)}: {TranspileExpression(ie.Expressions[1], model)}");
                         }
                         else {
-                            Error($"Unsupported dictionary initializer kind: {kv.Kind()}");
+                            Error($"Unsupported dictionary initializer: {kv.Kind()}");
                             sb.Append($"nil/*{kv.ToString().Trim()}*/");
                         }
                         head = ", ";
@@ -793,11 +793,14 @@ class Transpiler
             case SyntaxKind.TryStatement:
                 TranspileTryStatement((TryStatementSyntax)stmt, model, indent, w);
                 break;
+            case SyntaxKind.UsingStatement:
+                TranspileUsingStatement((UsingStatementSyntax)stmt, model, indent, w);
+                break;
             case SyntaxKind.WhileStatement:
                 TranspileWhileStatement((WhileStatementSyntax)stmt, model, indent, w);
                 break;
             default:
-                Error($"Unsupported statement {stmt.Kind()}");
+                Error($"Unsupported statement: {stmt.Kind()}");
                 w.WriteLine($"{indent}/*{stmt.Kind()}: {stmt.ToString().Trim()}*/");
                 break;
         }
@@ -926,6 +929,34 @@ class Transpiler
             TranspileBlock(block, model, indent + "    ", w);
             w.WriteLine($"{indent}}}");
         }
+    }
+
+    void TranspileUsingStatement(UsingStatementSyntax stmt, SemanticModel model, string indent, TextWriter w)
+    {
+        w.WriteLine($"{indent}{{");
+        if (stmt.Expression is {} expr) {
+            var exprCode = TranspileExpression(expr, model);
+            w.WriteLine($"{indent}    let using_ = {exprCode}");
+        }
+        else if (stmt.Declaration is {} decl) {
+            TranspileVariableDeclaration(decl, model, indent + "    ", w);
+        }
+        else {
+            Error($"Unsupported using statement");
+        }
+        w.WriteLine($"{indent}    defer {{");
+        if (stmt.Expression is not null) {
+            w.WriteLine($"{indent}        using_.Dispose()");
+        }
+        else if (stmt.Declaration is not null) {
+            foreach (var v in stmt.Declaration.Variables) {
+                var name = v.Identifier.ValueText;
+                w.WriteLine($"{indent}        {name}.Dispose()");
+            }
+        }
+        w.WriteLine($"{indent}    }}");
+        TranspileStatement(stmt.Statement, model, indent + "    ", w);
+        w.WriteLine($"{indent}}}");
     }
 
     void TranspileVariableDeclaration(VariableDeclarationSyntax decl, SemanticModel model, string indent, TextWriter w)
