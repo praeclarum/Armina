@@ -285,7 +285,6 @@ class Transpiler
         }
         else {
             w.WriteLine($") {{");
-            w.WriteLine($") {{");
             if (ctor.Body is {} block) {
                 TranspileBlock(block, model, $"{indent}    ", w);
             }
