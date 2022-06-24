@@ -706,6 +706,8 @@ class Transpiler
 
     string TranspileInvocation(string exprCode, SyntaxNode invokeNode, ArgumentListSyntax argList, SemanticModel model, string indent)
     {
+        if (exprCode == "nameof" && argList.Arguments.Count == 1)
+            return NameOf(argList.Arguments[0].Expression);
         var method = model.GetSymbolInfo(invokeNode).Symbol as IMethodSymbol;
         if (method == null) {
             Error($"Method resolution failed: {invokeNode}");
@@ -748,6 +750,16 @@ class Transpiler
         }
         sb.Append(")");
         return sb.ToString();
+    }
+
+    string NameOf(ExpressionSyntax value)
+    {
+        var name = value switch {
+            IdentifierNameSyntax id => id.Identifier.ToString(),
+            MemberAccessExpressionSyntax mae => mae.Name.ToString(),
+            _ => value.ToString()
+        };
+        return $"\"{name}\"";
     }
 
     void TranspileBlock(BlockSyntax block, SemanticModel model, string indent, TextWriter w)
