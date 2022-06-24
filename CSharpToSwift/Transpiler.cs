@@ -1050,13 +1050,14 @@ class Transpiler
     string GetSwiftTypeName(ISymbol? s)
     {
         if (s == null) {
-            return "AnyObject";
+            Error($"No symbol type provided");
+            return "AnyObject/*no symbol*/";
         }
         else if (s is IArrayTypeSymbol ats) {
             return $"[{GetSwiftTypeName(ats.ElementType)}]";
         }
-        else {
-            var name = s.Name;
+        else if (s is INamedTypeSymbol nts) {
+            var name = nts.Name;
             switch (name) {
                 case nameof(System.Boolean):
                     return "Bool";
@@ -1068,17 +1069,27 @@ class Transpiler
                     return "Int";
                 case nameof(System.IntPtr):
                     return "Int";
-                case "Object":
+                case nameof(System.Object):
                     return "AnyObject";
-                case "Single":
+                case nameof(System.Single):
                     return "Float";
                 default:
                     if (string.IsNullOrEmpty(name)) {
-                        Error($"Symbol {s} : {s.GetType()} has no name");
-                        return "AnyObject";
+                        Error($"No name for symbol: {s.GetType()}");
+                        return "AnyObject/*no name*/";
+                    }
+                    else if (name == "Nullable" && s.ContainingNamespace.Name == "System") {
+                        return GetSwiftTypeName(nts.TypeArguments.First()) + "?";
                     }
                     return name;
             }
+        }
+        else if (s is ITypeParameterSymbol tps) {
+            return tps.Name;
+        }
+        else {
+            Error($"Unsupported type symbol: {s.GetType()}");
+            return $"AnyObject/*{s}*/";
         }
     }
 
@@ -1123,6 +1134,8 @@ class Transpiler
                         return "false";
                     case nameof(System.Byte):
                         return "0";
+                    case nameof(System.Char):
+                        return "\"\\0\"";
                     case nameof(System.Double):
                         return "0.0";
                     case nameof(System.Single):
@@ -1145,6 +1158,9 @@ class Transpiler
                         return "0";
                     default:
                         if (ntype.IsReferenceType) {
+                            return "nil";
+                        }
+                        else if (ntype.Name == "Nullable" && ntype.ContainingNamespace.Name == "System") {
                             return "nil";
                         }
                         else {
