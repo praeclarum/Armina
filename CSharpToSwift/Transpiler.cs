@@ -106,6 +106,12 @@ class Transpiler
                         TranspileClass(swiftName, c, symbol, model, "", cw);
                     }
                     break;
+                case SyntaxKind.InterfaceDeclaration:
+                    var intf = (InterfaceDeclarationSyntax)node;
+                    using (var sw = NewSwiftWriter(swiftName)) {
+                        TranspileInterface(swiftName, intf, symbol, model, "", sw);
+                    }
+                    break;
                 case SyntaxKind.StructDeclaration:
                     var s = (StructDeclarationSyntax)node;
                     using (var sw = NewSwiftWriter(swiftName)) {
@@ -155,7 +161,23 @@ class Transpiler
         }
         w.WriteLine($" {{");
         foreach (var member in node.Members) {
-            TranspileClassOrStructMember(member, swiftName, node, symbol, model, indent + "    ", w);
+            TranspileClassOrStructMember(member, swiftName, node, symbol, model, indent + "    ", w, requireMethodBody: false);
+        }
+        w.WriteLine($"{indent}}}");
+    }
+
+    void TranspileInterface(string swiftName, InterfaceDeclarationSyntax node, INamedTypeSymbol symbol, SemanticModel model, string indent, TextWriter w)
+    {
+        w.Write($"{indent}protocol {swiftName}");
+        var head = " : ";
+        foreach (var i in symbol.Interfaces) {
+            var baseSwiftName = GetSwiftTypeName(i);
+            w.Write($"{head}{baseSwiftName}");
+            head = ", ";
+        }
+        w.WriteLine($" {{");
+        foreach (var member in node.Members) {
+            TranspileClassOrStructMember(member, swiftName, node, symbol, model, indent + "    ", w, requireMethodBody: false);
         }
         w.WriteLine($"{indent}}}");
     }
@@ -171,12 +193,12 @@ class Transpiler
         }
         w.WriteLine($" {{");
         foreach (var member in node.Members) {
-            TranspileClassOrStructMember(member, swiftName, node, symbol, model, indent + "    ", w);
+            TranspileClassOrStructMember(member, swiftName, node, symbol, model, indent + "    ", w, requireMethodBody: true);
         }
         w.WriteLine($"{indent}}}");
     }
 
-    void TranspileClassOrStructMember(MemberDeclarationSyntax member, string typeName, TypeDeclarationSyntax node, INamedTypeSymbol typeSymbol, SemanticModel model, string indent, TextWriter w)
+    void TranspileClassOrStructMember(MemberDeclarationSyntax member, string typeName, TypeDeclarationSyntax node, INamedTypeSymbol typeSymbol, SemanticModel model, string indent, TextWriter w, bool requireMethodBody)
     {
         switch (member.Kind ()) {
             case SyntaxKind.ClassDeclaration:
@@ -191,13 +213,13 @@ class Transpiler
                 }
                 break;
             case SyntaxKind.ConstructorDeclaration:
-                TranspileCtor((ConstructorDeclarationSyntax)member, typeSymbol, model, indent, w);
+                TranspileCtor((ConstructorDeclarationSyntax)member, typeSymbol, model, indent, w, requireMethodBody: requireMethodBody);
                 break;
             case SyntaxKind.FieldDeclaration:
                 TranspileField((FieldDeclarationSyntax)member, typeSymbol, model, indent, w);
                 break;
             case SyntaxKind.MethodDeclaration:
-                TranspileMethod((MethodDeclarationSyntax)member, typeSymbol, model, indent, w);
+                TranspileMethod((MethodDeclarationSyntax)member, typeSymbol, model, indent, w, requireMethodBody: requireMethodBody);
                 break;
             case SyntaxKind.PropertyDeclaration:
                 TranspileProperty((PropertyDeclarationSyntax)member, typeSymbol, model, indent, w);
@@ -247,7 +269,7 @@ class Transpiler
         }
     }
 
-    void TranspileCtor(ConstructorDeclarationSyntax ctor, INamedTypeSymbol containerTypeSymbol, SemanticModel model, string indent, TextWriter w)
+    void TranspileCtor(ConstructorDeclarationSyntax ctor, INamedTypeSymbol containerTypeSymbol, SemanticModel model, string indent, TextWriter w, bool requireMethodBody)
     {
         var docs = GetDocs(ctor);
         if (docs.Length > 0)
@@ -258,14 +280,20 @@ class Transpiler
         var slotType = isStatic ? "static " : "";
         w.Write($"{indent}{acc}{slotType}init(");
         TranspileParams(ctor.ParameterList, model, w);
-        w.WriteLine($") {{");
-        if (ctor.Body is {} block) {
-            TranspileBlock(block, model, $"{indent}    ", w);
+        if (ctor.Body is null && !requireMethodBody) {
+            w.WriteLine($")");
         }
-        w.WriteLine($"{indent}}}");
+        else {
+            w.WriteLine($") {{");
+            w.WriteLine($") {{");
+            if (ctor.Body is {} block) {
+                TranspileBlock(block, model, $"{indent}    ", w);
+            }
+            w.WriteLine($"{indent}}}");
+        }
     }
 
-    void TranspileMethod(MethodDeclarationSyntax method, INamedTypeSymbol containerTypeSymbol, SemanticModel model, string indent, TextWriter w)
+    void TranspileMethod(MethodDeclarationSyntax method, INamedTypeSymbol containerTypeSymbol, SemanticModel model, string indent, TextWriter w, bool requireMethodBody)
     {
         var docs = GetDocs(method);
         if (docs.Length > 0)
@@ -285,14 +313,20 @@ class Transpiler
             // Warning("Abstract methods are not supported");
         }
         // acc = acc + $"/*{method.Modifiers}*/";
-        var slotType = isStatic ? "static " : (isOverride ? "override " : (isAbstract ? "/*abstract*/ " : (isVirtual ? "" : "final ")));
+        var slotType = isStatic ? "static " : (isOverride ? "override " : (isAbstract ? "/*abstract*/ " : (isVirtual ? "" : (method.Body is not null ? "final " : ""))));
         w.Write($"{indent}{acc}{slotType}func {method.Identifier.ToString()}(");
         TranspileParams(method.ParameterList, model, w);
-        w.WriteLine($"){returnTypeCode} {{");
-        if (method.Body is {} block) {
-            TranspileBlock(block, model, $"{indent}    ", w);
+        w.Write($"){returnTypeCode}");
+        if (method.Body is null && !requireMethodBody) {
+            w.WriteLine();
         }
-        w.WriteLine($"{indent}}}");
+        else {
+            w.WriteLine($" {{");
+            if (method.Body is {} block) {
+                TranspileBlock(block, model, $"{indent}    ", w);
+            }
+            w.WriteLine($"{indent}}}");
+        }
     }
 
     private void TranspileParams(ParameterListSyntax parameterList, SemanticModel model, TextWriter w)
